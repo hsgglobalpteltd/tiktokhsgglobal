@@ -59,17 +59,24 @@ export default function ScanPackPage() {
   const [selectedOrderIds, setSelectedOrderIds] = React.useState<Set<string>>(new Set());
   const [selectedOrderItems, setSelectedOrderItems] = React.useState<Order | null>(null);
 
-  // Modals & Popups States
   const [isOptionsOpen, setIsOptionsOpen] = React.useState(false);
+  const [isSelectionOpen, setIsSelectionOpen] = React.useState(false);
   const [isCameraOpen, setIsCameraOpen] = React.useState(false);
   const [cameraMode, setCameraMode] = React.useState<"before" | "after">("before");
   const [cameraError, setCameraError] = React.useState<string | null>(null);
+  const pollingIntervalRef = React.useRef<any>(null);
   
   // Repack Confirmation Dialog State
   const [repackConfirmData, setRepackConfirmData] = React.useState<{
     order: Order;
     barcode: string;
     blob: Blob;
+  } | null>(null);
+
+  // Photo Reset Confirmation Dialog State
+  const [resetConfirmData, setResetConfirmData] = React.useState<{
+    orderId: string;
+    type: "before" | "after";
   } | null>(null);
 
   // Manual Input State
@@ -187,6 +194,9 @@ export default function ScanPackPage() {
     setBatchId("BATCH_" + now.toString(36).toUpperCase());
     setBatchStartTime(now);
     fetchOrders();
+    return () => {
+      stopMobilePolling();
+    };
   }, []);
 
   // Sync / Load orders list from Server
@@ -232,6 +242,27 @@ export default function ScanPackPage() {
       oscillator.stop(audioCtx.currentTime + 0.12);
     } catch (e) {
       console.error("Audio beep playback failed:", e);
+    }
+  };
+
+  // Play synthetic warehouse barcode error buzz sound
+  const playErrorBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.type = "sawtooth";
+      oscillator.frequency.setValueAtTime(150, audioCtx.currentTime); // Low pitch buzz
+      gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.4);
+    } catch (e) {
+      console.error("Audio error beep playback failed:", e);
     }
   };
 
@@ -283,12 +314,11 @@ export default function ScanPackPage() {
     return () => clearInterval(interval);
   }, [isCameraOpen]);
 
-  // zxing camera scanner initialization loop
+  // Camera stream initialization loop (No client-side zxing barcode reader)
   React.useEffect(() => {
     if (!isCameraOpen) return;
 
     let active = true;
-    let codeReader: any = null;
     let localStream: MediaStream | null = null;
 
     const stopAllTracks = () => {
@@ -302,33 +332,17 @@ export default function ScanPackPage() {
         });
         localStream = null;
       }
-      if (codeReader) {
-        try {
-          codeReader.reset();
-        } catch (e) {
-          console.error("Failed to reset code reader:", e);
-        }
-        codeReader = null;
-      }
     };
 
     const startScanner = async () => {
       try {
-        const { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } = await import("@zxing/library");
-        
-        // Configure hint formats to prioritize 1D courier barcodes and QR code scanning
-        const hints = new Map();
-        const formats = [
-          BarcodeFormat.CODE_128
-        ];
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
-        hints.set(DecodeHintType.TRY_HARDER, true);
-
-        codeReader = new BrowserMultiFormatReader(hints);
-
         // 1. Get back/rear camera ID if available, or fall back to environment mode
         let constraints: MediaStreamConstraints = {
-          video: { facingMode: "environment" },
+          video: { 
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
           audio: false
         };
 
@@ -345,12 +359,20 @@ export default function ScanPackPage() {
             // Use the last camera in the list (usually the highest resolution/back camera)
             if (backCamera.length > 0) {
               constraints = {
-                video: { deviceId: { ideal: backCamera[backCamera.length - 1].deviceId } },
+                video: { 
+                  deviceId: { ideal: backCamera[backCamera.length - 1].deviceId },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 }
+                },
                 audio: false
               };
             } else {
               constraints = {
-                video: { deviceId: { ideal: videoDevices[videoDevices.length - 1].deviceId } },
+                video: { 
+                  deviceId: { ideal: videoDevices[videoDevices.length - 1].deviceId },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 }
+                },
                 audio: false
               };
             }
@@ -366,13 +388,20 @@ export default function ScanPackPage() {
           console.warn("Failed to start video source with deviceId constraints, trying facingMode:", firstErr);
           try {
             localStream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: "environment" },
+              video: { 
+                facingMode: "environment",
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+              },
               audio: false
             });
           } catch (secondErr) {
             console.warn("Failed to start video source with facingMode, trying raw video option:", secondErr);
             localStream = await navigator.mediaDevices.getUserMedia({
-              video: true,
+              video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+              },
               audio: false
             });
           }
@@ -392,47 +421,9 @@ export default function ScanPackPage() {
           await videoRef.current.play();
         }
 
-        // 4. Start decoding continuously from video element when ready
-        const startDecoding = () => {
-          if (!active || !codeReader || !videoRef.current) return;
-          
-          codeReader.decodeFromVideoElement(videoRef.current, (result: any, error: any) => {
-            if (!active) return;
-            if (result) {
-              const decodedText = result.getText();
-              playBeep();
-
-              // Snap photo from the running video element using our canvas helper
-              const videoEl = videoRef.current;
-              const canvasEl = canvasRef.current;
-              if (videoEl && canvasEl) {
-                canvasEl.width = videoEl.videoWidth || 640;
-                canvasEl.height = videoEl.videoHeight || 480;
-                const ctx = canvasEl.getContext("2d");
-                ctx?.drawImage(videoEl, 0, 0);
-                canvasEl.toBlob(async (blob) => {
-                  if (blob && active) {
-                    active = false;
-                    stopAllTracks();
-                    handleScannedCode(decodedText, blob);
-                  }
-                }, "image/jpeg", 0.85);
-              }
-            }
-          });
-        };
-
-        if (videoRef.current) {
-          if (videoRef.current.readyState >= 2) {
-            startDecoding();
-          } else {
-            videoRef.current.oncanplay = startDecoding;
-          }
-        }
-
       } catch (err: any) {
-        console.error("ZXing Camera startup error:", err);
-        setCameraError("Failed to initiate scanning camera. Please check permissions or use manual scan.");
+        console.error("Camera startup error:", err);
+        setCameraError("Failed to initiate camera. Please check permissions or use manual scan.");
       }
     };
 
@@ -446,7 +437,55 @@ export default function ScanPackPage() {
       clearTimeout(timer);
       stopAllTracks();
     };
-  }, [isCameraOpen, cameraMode]);
+  }, [isCameraOpen]);
+
+  // Background silent auto-scan loop
+  React.useEffect(() => {
+    if (!isCameraOpen) return;
+
+    const interval = setInterval(async () => {
+      if (isUploading || repackConfirmData || isOptionsOpen) return;
+
+      const videoEl = videoRef.current;
+      const canvasEl = canvasRef.current;
+      if (!videoEl || !canvasEl) return;
+
+      try {
+        canvasEl.width = videoEl.videoWidth || 1280;
+        canvasEl.height = videoEl.videoHeight || 720;
+        const ctx = canvasEl.getContext("2d");
+        ctx?.drawImage(videoEl, 0, 0);
+
+        const base64Img = canvasEl.toDataURL("image/jpeg", 0.7).split(",")[1];
+
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
+        });
+
+        if (res.ok) {
+          const scanResult = await res.json() as { success: boolean; tracking_number: string | null; stuck: boolean };
+          if (scanResult.success && scanResult.tracking_number) {
+            if (cameraMode === "after" && !scanResult.stuck) {
+              return; // Ignore if label not stuck
+            }
+
+            playBeep();
+            canvasEl.toBlob(async (blob) => {
+              if (blob) {
+                await handleScannedCode(scanResult.tracking_number!, blob);
+              }
+            }, "image/jpeg", 0.85);
+          }
+        }
+      } catch (err) {
+        console.warn("Background auto-scan warning:", err);
+      }
+    }, 2800);
+
+    return () => clearInterval(interval);
+  }, [isCameraOpen, isUploading, cameraMode, repackConfirmData, isOptionsOpen]);
 
   // Convert blob to base64 string helper
   const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -460,6 +499,76 @@ export default function ScanPackPage() {
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
+  };
+
+  // Reset Packing or Shipping proof photo prompt
+  const handleResetPhoto = (orderId: string, type: "before" | "after") => {
+    setResetConfirmData({ orderId, type });
+  };
+
+  // Perform reset operation
+  const executeResetPhoto = async (orderId: string, type: "before" | "after") => {
+    setResetConfirmData(null);
+    try {
+      setIsUploading(true);
+
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          order_id: orderId,
+          packed_by: "Operator",
+          is_after_pack: type === "after",
+          reset: true
+        })
+      });
+
+      if (!res.ok) {
+        const errorText = await res.json() as any;
+        throw new Error(errorText.error || "Reset operation failed on backend");
+      }
+
+      const resJson = await res.json() as { success: boolean; order: any };
+
+      // Update local orders list state
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...resJson.order } : o));
+
+      // Also remove or update inside the session batch scannedItems
+      setScannedItems(prev => {
+        const existIdx = prev.findIndex(item => item.id === orderId);
+        if (existIdx !== -1) {
+          const updated = [...prev];
+          if (type === "after") {
+            updated[existIdx] = {
+              ...updated[existIdx],
+              after_pack_photo: "",
+              scanned_at_after: undefined
+            };
+          } else {
+            updated[existIdx] = {
+              ...updated[existIdx],
+              before_pack_photo: "",
+              scanned_at_before: undefined
+            };
+          }
+          if (!updated[existIdx].before_pack_photo && !updated[existIdx].after_pack_photo) {
+            return prev.filter(item => item.id !== orderId);
+          }
+          return updated;
+        }
+        return prev;
+      });
+
+      playBeep();
+      showToast(`Proof photo successfully reset for order ${orderId}`);
+
+    } catch (err: any) {
+      console.error(err);
+      playErrorBeep();
+      showToast(err.message || "Failed to reset photo.");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   // Main code processing function
@@ -595,6 +704,69 @@ export default function ScanPackPage() {
     }
   };
 
+  // Capture current camera video frame and send to Gemini API for AI decoding
+  const captureAndAIScan = async () => {
+    const videoEl = videoRef.current;
+    const canvasEl = canvasRef.current;
+    if (!videoEl || !canvasEl) return;
+
+    try {
+      setIsUploading(true);
+      
+      // Capture frame
+      canvasEl.width = videoEl.videoWidth || 1280;
+      canvasEl.height = videoEl.videoHeight || 720;
+      const ctx = canvasEl.getContext("2d");
+      ctx?.drawImage(videoEl, 0, 0);
+
+      // Convert canvas to base64
+      const base64Img = canvasEl.toDataURL("image/jpeg", 0.85).split(",")[1];
+
+      // Call AI Scan endpoint
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to process image with AI decoder");
+      }
+
+      const scanResult = await res.json() as { success: boolean; tracking_number: string | null; stuck: boolean };
+      
+      if (!scanResult.success || !scanResult.tracking_number) {
+        playErrorBeep();
+        showToast("AI Scan failed: No courier barcode detected in frame. Align label and try again.");
+        return;
+      }
+
+      // If Shipping Proof (after mode) and label is not stuck, reject it
+      if (cameraMode === "after" && !scanResult.stuck) {
+        playErrorBeep();
+        showToast("Scan ignored: Label must be stuck on the parcel package!");
+        return;
+      }
+
+      // Valid barcode found! Play success beep
+      playBeep();
+
+      // Convert canvas to Blob for final storage upload
+      canvasEl.toBlob(async (blob) => {
+        if (blob) {
+          await handleScannedCode(scanResult.tracking_number!, blob);
+        }
+      }, "image/jpeg", 0.85);
+
+    } catch (err: any) {
+      console.error(err);
+      playErrorBeep();
+      showToast(err.message || "Decoding error. Please retry.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   // Trigger manual entry form submit
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -622,10 +794,54 @@ export default function ScanPackPage() {
     setIsOptionsOpen(true);
   };
 
+  const startMobilePolling = () => {
+    stopMobilePolling();
+    let previousPackedCount = orders.filter(o => o.system_status === "packed").length;
+    
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?_t=" + Date.now(), { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json() as { orders: any[]; shops?: any[] };
+          const currentOrders = data.orders || [];
+          const currentPackedCount = currentOrders.filter(o => o.system_status === "packed").length;
+          
+          if (currentPackedCount > previousPackedCount) {
+            const newlyPacked = currentOrders.find(co => {
+              const old = orders.find(oo => oo.id === co.id);
+              return co.system_status === "packed" && (!old || old.system_status !== "packed");
+            });
+
+            setOrders(currentOrders);
+            if (data.shops) setShops(data.shops);
+
+            playBeep();
+            showToast(`Order ${newlyPacked ? newlyPacked.id : ""} successfully scanned via mobile phone!`);
+            
+            stopMobilePolling();
+            setIsSelectionOpen(false);
+          }
+        }
+      } catch (err) {
+        console.error("Mobile scan polling error:", err);
+      }
+    }, 3000);
+  };
+
+  const stopMobilePolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  };
+
   const launchCameraScanner = (mode: "before" | "after") => {
     setCameraMode(mode);
     setIsOptionsOpen(false);
-    setIsCameraOpen(true);
+    setIsSelectionOpen(true); // Open scanner selector modal step
+    setTimeout(() => {
+      startMobilePolling();
+    }, 50);
   };
 
   const formatDateTime = (timestamp?: number) => {
@@ -979,6 +1195,12 @@ export default function ScanPackPage() {
                                   }
                                   return null;
                                 })()}
+                                <button
+                                  onClick={() => handleResetPhoto(item.id, "before")}
+                                  className="mt-0.5 text-[9px] text-red-500 hover:text-red-700 font-semibold cursor-pointer select-none border border-red-200 hover:border-red-400 bg-red-50/50 hover:bg-red-50 px-1.5 py-0.5 rounded transition active:scale-95 outline-none"
+                                >
+                                  Reset
+                                </button>
                               </>
                             ) : (
                               <div className="w-12 h-12 bg-[#F1F3F4] border border-dashed border-[#E0E2E6] rounded-lg flex flex-col items-center justify-center text-[8px] text-[#9AA0A6] select-none">
@@ -1011,6 +1233,12 @@ export default function ScanPackPage() {
                                   }
                                   return null;
                                 })()}
+                                <button
+                                  onClick={() => handleResetPhoto(item.id, "after")}
+                                  className="mt-0.5 text-[9px] text-red-500 hover:text-red-700 font-semibold cursor-pointer select-none border border-red-200 hover:border-red-400 bg-red-50/50 hover:bg-red-50 px-1.5 py-0.5 rounded transition active:scale-95 outline-none"
+                                >
+                                  Reset
+                                </button>
                               </>
                             ) : (
                               <div className="w-12 h-12 bg-[#F1F3F4] border border-dashed border-[#E0E2E6] rounded-lg flex flex-col items-center justify-center text-[8px] text-[#9AA0A6] select-none">
@@ -1073,109 +1301,98 @@ export default function ScanPackPage() {
         </div>
       )}
 
-      {/* 2. Barcode Camera Scanner Modal */}
-      {isCameraOpen && (
-        <div 
-          onClick={resetInactivityTimer}
-          onMouseMove={resetInactivityTimer}
-          onKeyDown={resetInactivityTimer}
-          className="fixed inset-0 bg-black flex items-center justify-center z-[25000]"
-        >
-          {/* Main camera layout bounds */}
-          <div className="relative w-full h-full max-w-2xl max-h-[85vh] bg-[#1a1a1a] rounded-2xl overflow-hidden shadow-2xl flex flex-col border border-[#333]">
+      {/* 1b. Mobile QR Code Scanner Modal */}
+      {isSelectionOpen && (
+        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[20000] p-4 select-none animate-[fadeIn_0.15s_ease-out]">
+          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-5">
             
-            {/* Header control banner */}
-            <div className="p-4 bg-[#262626] border-b border-[#333] flex justify-between items-center text-white">
-              <div className="flex items-center gap-3">
-                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                  cameraMode === "after" ? "bg-[#137333] text-white" : "bg-[#0b57d0] text-white"
-                }`}>
-                  {cameraMode === "after" ? "Shipping Proof" : "Packing Proof"}
-                </span>
+            {/* Header */}
+            <div className="flex justify-between items-center border-b border-[#F1F3F4] pb-3">
+              <div>
+                <h3 className="text-base font-bold text-[#1F1F1F]">
+                  Scan Order with Mobile
+                </h3>
+                <p className="text-xs text-[#5F6368] mt-0.5">
+                  Scan Mode: <span className="font-semibold text-gray-800 uppercase">{cameraMode === "after" ? "Shipping Proof (App 6)" : "Packing Proof (App 5)"}</span>
+                </p>
               </div>
-              <div className="flex items-center gap-4">
-                <span className={`text-xs font-semibold ${inactivityCountdown <= 10 ? "text-red-500 animate-pulse" : "text-gray-300"}`}>
-                  Closing in {inactivityCountdown}s
-                </span>
-                <button 
-                  onClick={closeCamera}
-                  className="text-gray-400 hover:text-white outline-none cursor-pointer"
-                  title="Close scanner"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
+              <button 
+                onClick={() => {
+                  stopMobilePolling();
+                  setIsSelectionOpen(false);
+                }}
+                className="text-gray-400 hover:text-gray-600 outline-none cursor-pointer"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
 
-            {/* Video Feed Box container */}
-            <div className="flex-1 relative flex items-center justify-center bg-black overflow-hidden">
-              {cameraError ? (
-                <div className="p-6 text-center text-red-400 text-sm max-w-sm">
-                  <svg className="w-12 h-12 mx-auto text-red-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  {cameraError}
+            {/* QR Card Body */}
+            <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[#E0E2E6] text-center bg-slate-50/50">
+              <div className="p-2.5 bg-white rounded-xl border border-[#E0E2E6] shadow-sm flex items-center justify-center mb-3">
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
+                    (() => {
+                      if (typeof window === "undefined") return "";
+                      const base = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+                        ? "http://127.0.0.1:8080"
+                        : "https://ibhsgglobalapp.netlify.app";
+                      const folder = cameraMode === "after" ? "shipping-proof" : "packing-proof";
+                      return `${base}/${folder}/index.html`;
+                    })()
+                  )}`} 
+                  alt="Scan using mobile phone"
+                  className="w-[160px] h-[160px] object-contain select-none"
+                />
+              </div>
+
+              <h4 className="text-xs font-bold text-[#1F1F1F]">Scan QR Code to Open App</h4>
+              <p className="text-[10px] text-[#5F6368] mt-1 max-w-[240px] leading-normal">
+                Use your mobile phone camera to scan the code and launch the dedicated operator workflow.
+              </p>
+
+              {pollingIntervalRef.current ? (
+                <div className="flex items-center gap-1.5 mt-4 text-[#137333]">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider">Listening for phone scans...</span>
                 </div>
               ) : (
-                <>
-                  {/* Native HTML5 Video stream viewport */}
-                  <video 
-                    ref={videoRef}
-                    className="w-full h-full object-cover"
-                    playsInline
-                    autoPlay
-                    muted
-                  />
-                  
-                  {/* Canvas helper */}
-                  <canvas ref={canvasRef} className="hidden" />
-
-                  {/* style tag for scanner crosshair radar animation */}
-                  <style>{`
-                    @keyframes radarRotate {
-                      0% { transform: rotate(0deg); }
-                      100% { transform: rotate(360deg); }
-                    }
-                  `}</style>
-                  {/* Scanner Hunter Crosshair Reticle (aiming tracker) */}
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                    <div className="relative w-44 h-44 flex items-center justify-center">
-                      {/* Outer Ring */}
-                      <div 
-                        className="absolute inset-0 border border-dashed border-[#22c55e]/50 rounded-full"
-                        style={{ animation: "radarRotate 15s linear infinite" }}
-                      />
-                      {/* Corner target brackets */}
-                      <div className="absolute w-6 h-6 border-t-2 border-l-2 border-[#22c55e] top-0 left-0 rounded-tl-md" />
-                      <div className="absolute w-6 h-6 border-t-2 border-r-2 border-[#22c55e] top-0 right-0 rounded-tr-md" />
-                      <div className="absolute w-6 h-6 border-b-2 border-l-2 border-[#22c55e] bottom-0 left-0 rounded-bl-md" />
-                      <div className="absolute w-6 h-6 border-b-2 border-r-2 border-[#22c55e] bottom-0 right-0 rounded-br-md" />
-                      {/* Center targeting green dot and crosshair lines */}
-                      <div className="w-1.5 h-1.5 bg-[#22c55e] rounded-full shadow-[0_0_6px_#22c55e]" />
-                      <div className="absolute w-5 h-[1px] bg-[#22c55e]/70" />
-                      <div className="absolute h-5 w-[1px] bg-[#22c55e]/70" />
-                    </div>
-                  </div>
-                </>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startMobilePolling();
+                  }}
+                  className="mt-4 bg-[#EAF1FB] text-[#0B57D0] border border-[#C2E7FF] hover:bg-[#D2E3FC] px-3 py-1.5 text-[10px] font-bold rounded-lg transition active:scale-95 cursor-pointer"
+                >
+                  Activate Listener Connection
+                </button>
               )}
+            </div>
 
-              {/* Loading upload indicator overlay */}
-              {isUploading && (
-                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-white z-[30000]">
-                  <svg className="w-8 h-8 animate-spin text-[#0B57D0] mb-2" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                  </svg>
-                  <span className="text-xs font-semibold uppercase tracking-wider">Uploading Proof & Updating...</span>
-                </div>
-              )}
+            {/* Footer */}
+            <div className="flex justify-end gap-2.5 border-t border-[#F1F3F4] pt-3 mt-1">
+              <button 
+                onClick={() => {
+                  stopMobilePolling();
+                  setIsSelectionOpen(false);
+                }}
+                className="px-4 py-2 border border-[#E0E2E6] hover:bg-[#F8F9FA] text-[#5F6368] text-xs font-semibold rounded-lg transition cursor-pointer"
+              >
+                Cancel
+              </button>
             </div>
 
           </div>
         </div>
       )}
+
+      {/* 2. Barcode Camera Scanner Modal */}
+
 
       {/* 3. Repack Duplicate Confirmation Alert Overlay */}
       {repackConfirmData && (
@@ -1217,6 +1434,55 @@ export default function ScanPackPage() {
                   setRepackConfirmData(null);
                 }}
                 className="px-4 py-2 border border-[#E0E2E6] hover:bg-[#F8F9FA] text-[#5F6368] text-xs font-semibold rounded-lg transition cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 3b. Reset Photo Confirmation Alert Overlay */}
+      {resetConfirmData && (
+        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[30000] p-4 select-none">
+          <div className="bg-white border border-red-100 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 animate-[fadeIn_0.15s_ease-out]">
+            
+            <div className="flex items-start gap-3.5">
+              <div className="bg-red-50 p-2 rounded-full text-red-600">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Reset Proof Photo</h3>
+                <p className="text-xs text-[#5F6368] mt-1.5 leading-relaxed">
+                  Are you sure you want to reset this <strong className="text-gray-800">{resetConfirmData.type === "after" ? "Shipping Proof" : "Packing Proof"}</strong> photo?
+                  {resetConfirmData.type === "after" && (
+                    <>
+                      <br />
+                      <span className="text-red-600 font-semibold mt-1 block">
+                        Warning: This will also revert the order status from Packed back to Unpacked.
+                      </span>
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2.5 mt-3">
+              <button 
+                onClick={() => {
+                  const { orderId, type } = resetConfirmData;
+                  executeResetPhoto(orderId, type);
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg shadow transition cursor-pointer outline-none active:scale-95"
+              >
+                Confirm Reset
+              </button>
+              <button 
+                onClick={() => setResetConfirmData(null)}
+                className="px-4 py-2 border border-[#E0E2E6] hover:bg-[#F8F9FA] text-[#5F6368] text-xs font-semibold rounded-lg transition cursor-pointer outline-none active:scale-95"
               >
                 Cancel
               </button>
