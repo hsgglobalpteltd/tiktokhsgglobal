@@ -37,6 +37,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   const [printLogs, setPrintLogs] = React.useState<PrintLog[]>([]);
   const processedOrderIds = React.useRef<Set<string>>(new Set());
   const printingInProgress = React.useRef(false);
+  const printTimerRef = React.useRef<any>(null);
 
   const addLog = React.useCallback((type: "info" | "success" | "error", message: string) => {
     const now = new Date();
@@ -207,7 +208,8 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           const statusLower = (order.actual_status || "").toLowerCase();
           const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled"].includes(statusLower);
 
-          const orderAge = Date.now() - (order.create_time * 1000);
+          const syncTime = order.updated_at ? Number(order.updated_at) : (order.create_time * 1000);
+          const orderAge = Date.now() - syncTime;
           const passesGracePeriod = orderAge >= 5 * 60 * 1000; // 5 minutes grace period
           
           if (isUnpacked && isNotPrinted && !cannotPrint && !passesGracePeriod) {
@@ -305,10 +307,118 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const timer = setInterval(printWorker, 30000); // Poll every 30 seconds
-    printWorker(); // Run immediately on mount
+    async function scheduleNextPrint() {
+      try {
+        const settingsRes = await fetch(`${WORKER_URL}/api/tiktok/settings?_t=${Date.now()}`);
+        if (!settingsRes.ok) throw new Error("Failed to fetch settings");
+        const settings = await settingsRes.json() as any;
 
-    return () => clearInterval(timer);
+        const interval = settings.sync_interval || "1H";
+        const workingDays = (settings.sync_working_days || "Mon,Tue,Wed,Thu,Fri").split(",");
+        const timeFrom = settings.sync_time_from || "09:00";
+        const timeTo = settings.sync_time_to || "18:00";
+
+        const [fromH, fromM] = timeFrom.split(":").map(Number);
+        const [toH, toM] = timeTo.split(":").map(Number);
+        const fromMin = fromH * 60 + (fromM || 0);
+        const toMin = toH * 60 + (toM || 0);
+
+        let found = false;
+        let testTime = new Date();
+
+        for (let i = 0; i < 48; i++) {
+          const nowMs = testTime.getTime();
+          const sgDate = new Date(nowMs + (8 * 60 * 60 * 1000));
+          const sgHour = sgDate.getUTCHours();
+          const sgDayStr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][sgDate.getUTCDay()];
+
+          if (workingDays.includes(sgDayStr)) {
+            let isHourMatch = false;
+            if (interval === "1H") {
+              isHourMatch = true;
+            } else if (interval === "3H" && sgHour % 3 === 0) {
+              isHourMatch = true;
+            } else if (interval === "6H" && sgHour % 6 === 0) {
+              isHourMatch = true;
+            } else if (interval === "12H" && sgHour % 12 === 0) {
+              isHourMatch = true;
+            }
+
+            if (isHourMatch) {
+              let isInWindow = true;
+              if (interval === "1H" || interval === "3H") {
+                const currentMin = sgHour * 60 + 5; // print check runs 5 minutes past the hour
+                if (currentMin < fromMin || currentMin > toMin) {
+                  isInWindow = false;
+                }
+              }
+
+              if (isInWindow) {
+                const targetUtcMs = Date.UTC(
+                  sgDate.getUTCFullYear(),
+                  sgDate.getUTCMonth(),
+                  sgDate.getUTCDate(),
+                  sgHour - 8,
+                  5, // minute 5
+                  0,
+                  0
+                );
+                const targetLocalTime = new Date(targetUtcMs);
+
+                if (targetLocalTime.getTime() > Date.now() + 1000) {
+                  const delay = targetLocalTime.getTime() - Date.now();
+                  addLog("info", `Next scheduled print check at: ${targetLocalTime.toLocaleString()} (in ${Math.round(delay / 60000)} mins)`);
+
+                  if (printTimerRef.current) clearTimeout(printTimerRef.current);
+                  printTimerRef.current = setTimeout(async () => {
+                    await printWorker();
+                    scheduleNextPrint();
+                  }, delay);
+
+                  found = true;
+                  break;
+                }
+              }
+            }
+          }
+          testTime.setHours(testTime.getHours() + 1);
+          testTime.setMinutes(5);
+        }
+
+        if (!found) {
+          addLog("warning", "Could not calculate next scheduled sync time. Retrying in 15 minutes.");
+          if (printTimerRef.current) clearTimeout(printTimerRef.current);
+          printTimerRef.current = setTimeout(async () => {
+            await printWorker();
+            scheduleNextPrint();
+          }, 15 * 60 * 1000);
+        }
+      } catch (err: any) {
+        addLog("error", `Failed to schedule next print check: ${err.message}. Retrying in 5 minutes.`);
+        if (printTimerRef.current) clearTimeout(printTimerRef.current);
+        printTimerRef.current = setTimeout(scheduleNextPrint, 5 * 60 * 1000);
+      }
+    }
+
+    // Run print worker once immediately on startup/authorization
+    printWorker();
+    scheduleNextPrint();
+
+    // Event listener for manual synchronizations
+    const handleManualSync = () => {
+      addLog("info", "Manual sync detected. Scheduling print check in 5 minutes...");
+      if (printTimerRef.current) clearTimeout(printTimerRef.current);
+      printTimerRef.current = setTimeout(async () => {
+        await printWorker();
+        scheduleNextPrint();
+      }, 5 * 60 * 1000);
+    };
+    window.addEventListener("tiktok-manual-sync", handleManualSync);
+
+    return () => {
+      if (printTimerRef.current) clearTimeout(printTimerRef.current);
+      window.removeEventListener("tiktok-manual-sync", handleManualSync);
+    };
   }, [status, autoPrintEnabled, terminalName, addLog, printPdf, autoPrintPaused]);
 
   const handleKeypadPress = (val: string) => {

@@ -202,6 +202,7 @@ export default function OrdersPage() {
         setShops(dataSync.shops || []);
         setOrders(dataSync.orders || []);
         showToast("Orders refreshed successfully");
+        window.dispatchEvent(new CustomEvent("tiktok-manual-sync"));
       } else {
         throw new Error(dataSync.error || "Unknown error occurred");
       }
