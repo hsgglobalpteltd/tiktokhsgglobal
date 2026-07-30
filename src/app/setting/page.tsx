@@ -276,18 +276,14 @@ export default function SettingPage() {
           });
           if (createRes.ok) {
             const createData = await createRes.json() as any;
-            if (createData.success && createData.order) {
-              // Extract PDF URL (proof_photo)
-              let docUrl = createData.order.proof_photo;
-              if (!docUrl) {
-                try {
-                  const rawData = JSON.parse(createData.order.raw_data);
-                  docUrl = rawData.proof_photo || "";
-                } catch {}
-              }
-              if (docUrl) {
-                docUrls.push(docUrl);
-                printedOrdersInfo.push({ id: order.id, shop_id: order.shop_id });
+            if (createData.success) {
+              const printRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+              if (printRes.ok) {
+                const printData = await printRes.json() as any;
+                if (printData.success && printData.doc_url) {
+                  docUrls.push(printData.doc_url);
+                  printedOrdersInfo.push({ id: order.id, shop_id: order.shop_id });
+                }
               }
             }
           }

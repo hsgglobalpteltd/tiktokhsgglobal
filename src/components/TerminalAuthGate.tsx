@@ -216,35 +216,22 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
             }
 
             const createData = await createRes.json();
-            if (!createData.success || !createData.order?.raw_data) {
-              throw new Error(createData.error || "Failed to generate document URL");
+            if (!createData.success) {
+              throw new Error(createData.error || "Failed to arrange shipment");
             }
 
-            // Extract document URL
-            let docUrl = "";
-            try {
-              const rawParsed = JSON.parse(createData.order.raw_data);
-              docUrl = rawParsed.tracking_number ? createData.order.proof_photo : ""; // proof_photo holds pdf in backend sync mapping fallback if create returns it
-              
-              // Fallback to searching final URL
-              if (!docUrl && rawParsed.package_list) {
-                docUrl = createData.order.proof_photo;
-              }
-            } catch {}
-
-            // Fallback: If not parsed, read from response order structure
-            if (!docUrl) {
-              // Try parsing doc_url out of raw_data if mapped
-              try {
-                const rawData = JSON.parse(createData.order.raw_data);
-                docUrl = rawData.proof_photo || "";
-              } catch {}
+            // Call print-awb GET request to retrieve doc_url
+            addLog("info", `Retrieving AWB document URL for order ${order.id}...`);
+            const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+            if (!printRes.ok) {
+              throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
+            }
+            const printData = await printRes.json();
+            if (!printData.success || !printData.doc_url) {
+              throw new Error(printData.error || "No document URL returned from server");
             }
 
-            // If still missing, check createData order structures
-            if (!docUrl) {
-              throw new Error("No AWB document PDF URL returned from server");
-            }
+            const docUrl = printData.doc_url;
 
             addLog("info", `AWB document generated. Spooling printing...`);
             await printPdf(docUrl, order.id, order.shop_id);
