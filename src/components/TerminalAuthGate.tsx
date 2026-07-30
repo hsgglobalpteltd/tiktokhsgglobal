@@ -245,7 +245,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
             if (hasTracking) {
               addLog("info", `AWB tracking number already exists for order ${order.id}. Fetching document URL...`);
-              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
               if (!printRes.ok) {
                 throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
               }
@@ -277,7 +277,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
               }
 
               addLog("info", `Retrieving AWB document URL for order ${order.id}...`);
-              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
               if (!printRes.ok) {
                 throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
               }
