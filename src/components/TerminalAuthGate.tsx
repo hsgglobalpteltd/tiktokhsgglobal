@@ -177,10 +177,14 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         const unprintedOrders = data.orders.filter((order: any) => {
           const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
           const isNotPrinted = !order.awb_printed;
+          
+          const statusLower = (order.actual_status || "").toLowerCase();
+          const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled"].includes(statusLower);
+
           const orderAge = Date.now() - (order.create_time * 1000);
           const passesGracePeriod = orderAge >= 5 * 60 * 1000; // 5 minutes grace period
           
-          if (isUnpacked && isNotPrinted && !passesGracePeriod) {
+          if (isUnpacked && isNotPrinted && !cannotPrint && !passesGracePeriod) {
             // Log once for grace period warning
             if (!processedOrderIds.current.has(order.id)) {
               addLog("info", `Order ${order.id} is within the 5-minute grace period. Waiting.`);
@@ -188,7 +192,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
             }
           }
 
-          return isUnpacked && isNotPrinted && passesGracePeriod;
+          return isUnpacked && isNotPrinted && !cannotPrint && passesGracePeriod;
         });
 
         // Clear processed set for orders no longer in the pending list

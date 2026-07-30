@@ -246,12 +246,16 @@ export default function SettingPage() {
 
       const terminalName = sessionStorage.getItem("terminal_name") || "Test Terminal";
 
-      // Filter: status unpacked, awb not printed, age >= 5 mins
+      // Filter: status unpacked, awb not printed, age >= 5 mins, not shipped/transit/cancelled
       const unprintedOrders = data.orders.filter((order: any) => {
         const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
         const isNotPrinted = !order.awb_printed;
+        
+        const statusLower = (order.actual_status || "").toLowerCase();
+        const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled"].includes(statusLower);
+
         const orderAge = Date.now() - (order.create_time * 1000);
-        return isUnpacked && isNotPrinted && orderAge >= 5 * 60 * 1000;
+        return isUnpacked && isNotPrinted && !cannotPrint && orderAge >= 5 * 60 * 1000;
       });
 
       if (unprintedOrders.length === 0) {
