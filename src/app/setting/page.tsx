@@ -668,6 +668,43 @@ export default function SettingPage() {
             </div>
           </div>
 
+          {/* Terminal IP Configuration Section */}
+          <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
+            <h2 className="section-title">Terminal IP Configuration</h2>
+            <div className="flex flex-col gap-2.5 mt-4">
+              <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
+                Distinguish multiple machines sharing the same local network by setting a local IPv4 address override.
+              </p>
+              <div className="flex gap-2.5 mt-2">
+                <input
+                  type="text"
+                  id="local-ip-settings"
+                  defaultValue={localStorage.getItem("local_terminal_ip") || ""}
+                  placeholder="e.g. 192.168.1.100"
+                  className="form-input"
+                  style={{ maxWidth: "200px", height: "36px", textAlign: "center" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.getElementById("local-ip-settings") as HTMLInputElement;
+                    if (input) {
+                      localStorage.setItem("local_terminal_ip", input.value.trim());
+                      showToast("Local IP override saved successfully. Reloading...");
+                      setTimeout(() => {
+                        window.location.reload();
+                      }, 1500);
+                    }
+                  }}
+                  className="btn-primary"
+                  style={{ height: "36px" }}
+                >
+                  Save Local IP
+                </button>
+              </div>
+            </div>
+          </div>
+
         </div>
 
         {/* Integration Authorization & Linked Shops */}

@@ -40,43 +40,45 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     ]);
   }, []);
 
-  // 1. Fetch IP check on startup
-  React.useEffect(() => {
-    async function verifyIP() {
-      try {
-        const res = await fetch(`${WORKER_URL}/api/tiktok/terminals/verify-ip?_t=${Date.now()}`);
-        if (!res.ok) throw new Error("Verification request failed");
-        
-        const data = await res.json();
-        setClientIp(data.ip || "");
-        
-        if (data.registered) {
-          setTerminalName(data.name || "");
-          setAllowedPages(data.allowedPages || []);
-          setTerminalPin(data.pin || "");
-          setAutoPrintEnabled(!!data.autoPrint);
+  const verifyIP = React.useCallback(async () => {
+    try {
+      const localIp = localStorage.getItem("local_terminal_ip") || "";
+      const res = await fetch(`${WORKER_URL}/api/tiktok/terminals/verify-ip?client_local_ip=${encodeURIComponent(localIp)}&_t=${Date.now()}`);
+      if (!res.ok) throw new Error("Verification request failed");
+      
+      const data = await res.json();
+      setClientIp(data.ip || "");
+      
+      if (data.registered) {
+        setTerminalName(data.name || "");
+        setAllowedPages(data.allowedPages || []);
+        setTerminalPin(data.pin || "");
+        setAutoPrintEnabled(!!data.autoPrint);
 
-          sessionStorage.setItem("terminal_name", data.name || "");
-          sessionStorage.setItem("terminal_allowed_pages", JSON.stringify(data.allowedPages || []));
-          sessionStorage.setItem("terminal_ip", data.ip || "");
+        sessionStorage.setItem("terminal_name", data.name || "");
+        sessionStorage.setItem("terminal_allowed_pages", JSON.stringify(data.allowedPages || []));
+        sessionStorage.setItem("terminal_ip", data.ip || "");
 
-          const isAuth = sessionStorage.getItem("terminal_auth") === "true";
-          if (isAuth) {
-            setStatus("authenticated");
-          } else {
-            setStatus("prompt_pin");
-          }
+        const isAuth = sessionStorage.getItem("terminal_auth") === "true";
+        if (isAuth) {
+          setStatus("authenticated");
         } else {
-          setStatus("unregistered");
+          setStatus("prompt_pin");
         }
-      } catch (err) {
-        console.error("IP verification failed:", err);
-        // Fallback to unregistered or retry
+      } else {
         setStatus("unregistered");
       }
+    } catch (err) {
+      console.error("IP verification failed:", err);
+      // Fallback to unregistered or retry
+      setStatus("unregistered");
     }
-    verifyIP();
   }, []);
+
+  // 1. Fetch IP check on startup
+  React.useEffect(() => {
+    verifyIP();
+  }, [verifyIP]);
 
   // 2. Allowed Route Redirection (Route Guard)
   React.useEffect(() => {
@@ -318,9 +320,37 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           </svg>
         </div>
         <h2 className="text-xl font-bold text-red-950 mb-2">Unauthorized Terminal Access</h2>
-        <p className="text-sm text-red-700 max-w-md leading-relaxed">
+        <p className="text-sm text-red-700 max-w-md leading-relaxed mb-6">
           Your client IP address <strong className="font-mono bg-red-100 px-1.5 py-0.5 rounded border border-red-200">{clientIp}</strong> is not registered. Please contact your system administrator to authorize this terminal.
         </p>
+        
+        {/* Local IP Override Configurator */}
+        <div className="bg-white rounded-xl border border-red-200 p-6 w-full max-w-xs shadow-md flex flex-col gap-3.5">
+          <label className="text-[11px] font-bold text-zinc-500 uppercase text-left block">
+            Local IPv4 Override
+          </label>
+          <input 
+            type="text" 
+            id="local-ip-input"
+            defaultValue={localStorage.getItem("local_terminal_ip") || ""}
+            placeholder="e.g. 192.168.1.105"
+            className="px-3 py-2 border border-zinc-300 rounded-lg text-sm focus:outline-none focus:border-[#0b57d0]"
+            style={{ textAlign: "center" }}
+          />
+          <button
+            onClick={() => {
+              const input = document.getElementById("local-ip-input") as HTMLInputElement;
+              if (input) {
+                localStorage.setItem("local_terminal_ip", input.value.trim());
+                setStatus("loading");
+                verifyIP();
+              }
+            }}
+            className="w-full px-4 py-2 bg-[#0b57d0] hover:bg-[#0842a0] text-white text-xs font-bold rounded-lg transition duration-150 shadow-sm cursor-pointer"
+          >
+            Save Local IP & Retry
+          </button>
+        </div>
       </div>
     );
   }
