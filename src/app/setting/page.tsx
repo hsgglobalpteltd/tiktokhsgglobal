@@ -208,6 +208,156 @@ export default function SettingPage() {
     return `${day}/${month}/${year}`;
   };
 
+  const [countdown, setCountdown] = React.useState(0);
+  const countdownIntervalRef = React.useRef<any>(null);
+
+  const handleTestPrint = () => {
+    if (countdown > 0) return;
+    setCountdown(60);
+
+    countdownIntervalRef.current = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(countdownIntervalRef.current);
+          runCombinedPrint();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const runCombinedPrint = async () => {
+    showToast("Starting combined print job...");
+    try {
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?_t=${Date.now()}`);
+      if (!res.ok) throw new Error("Failed to fetch orders");
+      
+      const data = await res.json() as any;
+      if (!data.success || !data.orders) throw new Error(data.error || "No orders returned");
+
+      const terminalName = sessionStorage.getItem("terminal_name") || "Test Terminal";
+
+      // Filter: status unpacked, awb not printed, age >= 5 mins
+      const unprintedOrders = data.orders.filter((order: any) => {
+        const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
+        const isNotPrinted = !order.awb_printed;
+        const orderAge = Date.now() - (order.create_time * 1000);
+        return isUnpacked && isNotPrinted && orderAge >= 5 * 60 * 1000;
+      });
+
+      if (unprintedOrders.length === 0) {
+        showToast("No pending unprinted orders to test.");
+        return;
+      }
+
+      showToast(`Generating AWBs for ${unprintedOrders.length} orders...`);
+      const docUrls: string[] = [];
+      const printedOrdersInfo: { id: string, shop_id: string }[] = [];
+
+      for (const order of unprintedOrders) {
+        try {
+          const createRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/create-awb", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              order_id: order.id,
+              shop_id: order.shop_id,
+              action_by: terminalName
+            })
+          });
+          if (createRes.ok) {
+            const createData = await createRes.json() as any;
+            if (createData.success && createData.order) {
+              // Extract PDF URL (proof_photo)
+              let docUrl = createData.order.proof_photo;
+              if (!docUrl) {
+                try {
+                  const rawData = JSON.parse(createData.order.raw_data);
+                  docUrl = rawData.proof_photo || "";
+                } catch {}
+              }
+              if (docUrl) {
+                docUrls.push(docUrl);
+                printedOrdersInfo.push({ id: order.id, shop_id: order.shop_id });
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to create AWB for order ${order.id}:`, err);
+        }
+      }
+
+      if (docUrls.length === 0) {
+        throw new Error("Failed to generate shipping documents for candidate orders.");
+      }
+
+      showToast("Downloading and merging AWBs...");
+      const { PDFDocument } = await import("pdf-lib");
+      const mergedPdf = await PDFDocument.create();
+
+      for (const docUrl of docUrls) {
+        try {
+          const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
+          const pdfRes = await fetch(proxyUrl);
+          if (pdfRes.ok) {
+            const pdfBytes = await pdfRes.arrayBuffer();
+            const pdf = await PDFDocument.load(pdfBytes);
+            const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+            copiedPages.forEach((page) => {
+              mergedPdf.addPage(page);
+            });
+          }
+        } catch (err) {
+          console.error("Failed to fetch/merge PDF:", err);
+        }
+      }
+
+      showToast("Spooling merged shipping documents to printer...");
+      const mergedPdfBytes = await mergedPdf.save();
+      const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
+      const blobUrl = URL.createObjectURL(blob);
+
+      // Print in hidden iframe
+      const iframe = document.createElement("iframe");
+      iframe.style.position = "fixed";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "none";
+      iframe.src = blobUrl;
+      document.body.appendChild(iframe);
+
+      iframe.onload = () => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(async () => {
+          document.body.removeChild(iframe);
+          URL.revokeObjectURL(blobUrl);
+          
+          // Log printed status in backend for all
+          for (const info of printedOrdersInfo) {
+            try {
+              await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(info.id)}&shop_id=${encodeURIComponent(info.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+            } catch {}
+          }
+          showToast("Combined print job spooled successfully.");
+          // Trigger page updates
+          window.dispatchEvent(new CustomEvent("db-refresh"));
+        }, 4000);
+      };
+    } catch (err: any) {
+      showToast(`Test print failed: ${err.message}`);
+    }
+  };
+
   const handleUpdateSyncStartDate = async (shopId: string, timestamp: number) => {
     try {
       const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
@@ -488,6 +638,34 @@ export default function SettingPage() {
                 </div>
               </div>
             </form>
+          </div>
+
+          {/* Terminal Print Testing Section */}
+          <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
+            <h2 className="section-title">Terminal Auto Print Testing</h2>
+            <div className="flex flex-col gap-2.5 mt-4">
+              <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
+                Trigger a manual test print spooler. This will fetch all active unprinted orders from the server, verify the 5-minute grace period, generate their AWBs, merge them, and print them in a combined document.
+              </p>
+              <div style={{ marginTop: "8px" }}>
+                <button
+                  type="button"
+                  onClick={handleTestPrint}
+                  disabled={countdown > 0}
+                  className={`btn-primary ${countdown > 0 ? "opacity-50 cursor-not-allowed" : ""}`}
+                  style={{
+                    padding: "8px 16px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    height: "36px",
+                    borderRadius: "8px",
+                    cursor: countdown > 0 ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {countdown > 0 ? `Pending Print (${countdown}s)` : "Test Print"}
+                </button>
+              </div>
+            </div>
           </div>
 
         </div>

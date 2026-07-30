@@ -187,38 +187,60 @@ export default function ScanPackPage() {
       setSelectedOrderIds(new Set(displayedOrders.map(o => o.id)));
     }
   };
-
   // Initialize Batch ID and load orders list
   React.useEffect(() => {
     const now = Date.now();
     setBatchId("BATCH_" + now.toString(36).toUpperCase());
     setBatchStartTime(now);
-    fetchOrders();
+    fetchOrders(false);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(true);
+      }
+    }, 30000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       stopMobilePolling();
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
   // Sync / Load orders list from Server
-  const fetchOrders = async () => {
+  const fetchOrders = async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) {
+        setIsLoading(true);
+      }
       const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?_t=" + Date.now(), { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as { orders: any[]; shops?: any[] };
         setOrders(data.orders || []);
         setShops(data.shops || []);
       } else {
-        showToast("Failed to load orders list");
+        if (!silent) {
+          showToast("Failed to load orders list");
+        }
       }
     } catch (e) {
       console.error(e);
-      showToast("Network error synchronizing orders");
+      if (!silent) {
+        showToast("Network error synchronizing orders");
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   };
-
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);

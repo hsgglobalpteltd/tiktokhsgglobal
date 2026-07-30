@@ -102,19 +102,16 @@ export default function OrdersPage() {
     setSelectedOrderIds(new Set());
     setCurrentPage(1);
   }, [selectedShopId, selectedTab, searchQuery, selectedMonth, startDate, endDate, rowsPerPage, customRowsInput]);
-
-  React.useEffect(() => {
-    fetchOrders(false);
-  }, []);
-
-  const fetchOrders = async (sync = false) => {
+  const fetchOrders = async (sync = false, silent = false) => {
     try {
       if (sync) {
         setIsSyncing(true);
-      } else if (orders.length === 0) {
+      } else if (orders.length === 0 && !silent) {
         setIsLoading(true);
       }
-      setError(null);
+      if (!silent) {
+        setError(null);
+      }
       const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=${sync}&_t=${Date.now()}`, {
         cache: "no-store"
       });
@@ -125,7 +122,7 @@ export default function OrdersPage() {
       if (data.success) {
         setShops(data.shops || []);
         setOrders(data.orders || []);
-        if (sync) {
+        if (sync && !silent) {
           showToast("Orders refreshed successfully");
         }
       } else {
@@ -133,13 +130,38 @@ export default function OrdersPage() {
       }
     } catch (err: any) {
       console.error("Error fetching orders:", err);
-      setError(err.message || "Failed to load orders dashboard data.");
+      if (!silent) {
+        setError(err.message || "Failed to load orders dashboard data.");
+      }
     } finally {
-      setIsLoading(false);
-      setIsSyncing(false);
+      if (!silent) {
+        setIsLoading(false);
+        setIsSyncing(false);
+      }
     }
   };
 
+  React.useEffect(() => {
+    fetchOrders(false);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(false, true);
+      }
+    }, 30000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(false, true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
   const handleRefreshClick = async () => {
     if (isLoading || isSyncing) return;
     try {
@@ -1631,14 +1653,6 @@ export default function OrdersPage() {
                 // Sort descending (newest first)
                 logsList.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
 
-                if (logsList.length === 0) {
-                  return (
-                    <div className="text-center text-xs text-[#5F6368] italic py-12 border border-dashed border-[#E0E2E6] rounded-xl">
-                      No activity logs recorded for this order.
-                    </div>
-                  );
-                }
-
                 // Helper to format date-time
                 const formatDateTime = (ts: number) => {
                   if (!ts) return "N/A";
@@ -1652,45 +1666,120 @@ export default function OrdersPage() {
                   return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
                 };
 
+                // Extract Transit and Delivered timestamps (with fallback to logs)
+                const transitTime = (selectedOrderForLogs as any).transit_at || 
+                  logsList.find((l: any) => /transit|shipped|handover|collect/i.test(l.action || ""))?.timestamp || 0;
+                
+                const deliveredTime = (selectedOrderForLogs as any).delivered_at || 
+                  logsList.find((l: any) => /delivered|completed/i.test(l.action || ""))?.timestamp || 0;
+
+                const packingImg = (selectedOrderForLogs as any).before_pack_photo || 
+                  logsList.find((l: any) => /before pack|pack start/i.test(l.action || ""))?.photoUrl || "";
+                  
+                const shippingImg = selectedOrderForLogs.proof_photo || 
+                  logsList.find((l: any) => /^(re)?pack$|pack done|shipped/i.test(l.action || ""))?.photoUrl || "";
+
                 return (
-                  <div className="relative border-l border-[#E0E2E6] ml-2.5 pl-5 flex flex-col gap-5">
-                    {logsList.map((log: any, idx: number) => {
-                      const isAWBAction = ["create awb", "print awb", "reprint awb"].includes((log.action || "").toLowerCase());
-                      const isPackAction = ["pack", "packed"].includes((log.action || "").toLowerCase());
-                      const isCollectAction = ["collect", "collected", "handover"].includes((log.action || "").toLowerCase());
-                      const isSync = (log.action || "").toLowerCase().includes("sync");
-
-                      let dotColor = "bg-gray-400";
-                      if (isAWBAction) dotColor = "bg-[#0b57d0]";
-                      else if (isPackAction) dotColor = "bg-[#137333]";
-                      else if (isCollectAction) dotColor = "bg-[#b76e00]";
-                      else if (isSync) dotColor = "bg-slate-500";
-
-                      return (
-                        <div key={idx} className="relative group">
-                          {/* Timeline dot */}
-                          <span className={`absolute -left-[26px] top-1 w-3 h-3 rounded-full border-2 border-white ring-4 ring-transparent transition duration-150 ${dotColor}`} />
-                          
-                          {/* Log details */}
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-bold text-[#1f1f1f]">{log.action}</span>
-                              <span className="text-[10px] text-[#5f6368] font-semibold bg-[#f1f3f4] px-2 py-0.5 rounded-full select-none">
-                                by {log.actionBy || "System"}
-                              </span>
-                            </div>
-                            {log.remark && (
-                              <span className="text-[11px] text-[#5F6368] leading-relaxed break-words">
-                                {log.remark}
-                              </span>
-                            )}
-                            <span className="text-[10px] text-[#9aa0a6] font-medium font-mono select-none">
-                              {formatDateTime(log.timestamp)}
+                  <div className="flex flex-col gap-6">
+                    {/* Key Milestones & Proof Images */}
+                    {(packingImg || shippingImg || transitTime || deliveredTime) && (
+                      <div className="border border-[#E0E2E6] rounded-xl bg-[#F8F9FA] p-4 flex flex-col gap-4">
+                        
+                        {/* Timestamps Grid */}
+                        <div className="grid grid-cols-2 gap-4 border-b border-[#E0E2E6] pb-3 text-xs">
+                          <div>
+                            <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider block mb-1">Transit Time</span>
+                            <span className="font-semibold font-mono text-[#1F1F1F]">
+                              {transitTime ? formatDateTime(transitTime) : "Not In Transit"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider block mb-1">Delivered Time</span>
+                            <span className="font-semibold font-mono text-[#1F1F1F]">
+                              {deliveredTime ? formatDateTime(deliveredTime) : "Not Delivered Yet"}
                             </span>
                           </div>
                         </div>
-                      );
-                    })}
+
+                        {/* Images Row */}
+                        {(packingImg || shippingImg) && (
+                          <div className="flex gap-4">
+                            {packingImg && (
+                              <div className="flex-1 flex flex-col gap-1.5 items-center bg-white border border-[#E0E2E6] p-2.5 rounded-lg">
+                                <span className="text-[9px] font-bold text-[#5F6368] uppercase tracking-wider">Packing Img</span>
+                                <a href={packingImg} target="_blank" rel="noreferrer" className="relative group overflow-hidden rounded-md border border-[#E0E2E6] aspect-square w-full max-w-[100px] flex items-center justify-center bg-[#F1F3F4] cursor-pointer">
+                                  <img src={packingImg} alt="Packing Proof" className="w-full h-full object-cover group-hover:scale-105 transition duration-200" />
+                                </a>
+                              </div>
+                            )}
+                            {shippingImg && (
+                              <div className="flex-1 flex flex-col gap-1.5 items-center bg-white border border-[#E0E2E6] p-2.5 rounded-lg">
+                                <span className="text-[9px] font-bold text-[#5F6368] uppercase tracking-wider">Shipping Img</span>
+                                <a href={shippingImg} target="_blank" rel="noreferrer" className="relative group overflow-hidden rounded-md border border-[#E0E2E6] aspect-square w-full max-w-[100px] flex items-center justify-center bg-[#F1F3F4] cursor-pointer">
+                                  <img src={shippingImg} alt="Shipping Proof" className="w-full h-full object-cover group-hover:scale-105 transition duration-200" />
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Log Timeline */}
+                    <div>
+                      <h4 className="text-[11px] font-bold text-[#5F6368] uppercase tracking-wider mb-3">Timeline Events</h4>
+                      {logsList.length === 0 ? (
+                        <div className="text-center text-xs text-[#5F6368] italic py-8 border border-dashed border-[#E0E2E6] rounded-xl">
+                          No activity logs recorded for this order.
+                        </div>
+                      ) : (
+                        <div className="relative border-l border-[#E0E2E6] ml-2.5 pl-5 flex flex-col gap-5">
+                          {logsList.map((log: any, idx: number) => {
+                            const isAWBAction = ["create awb", "print awb", "reprint awb"].includes((log.action || "").toLowerCase());
+                            const isPackAction = ["pack", "packed", "before pack"].includes((log.action || "").toLowerCase());
+                            const isCollectAction = ["collect", "collected", "handover", "transit"].includes((log.action || "").toLowerCase());
+                            const isSync = (log.action || "").toLowerCase().includes("sync");
+
+                            let dotColor = "bg-gray-400";
+                            if (isAWBAction) dotColor = "bg-[#0b57d0]";
+                            else if (isPackAction) dotColor = "bg-[#137333]";
+                            else if (isCollectAction) dotColor = "bg-[#b76e00]";
+                            else if (isSync) dotColor = "bg-slate-500";
+
+                            let actionLabel = log.action || "";
+                            if (actionLabel.toLowerCase() === "before pack") actionLabel = "Packing Proof";
+                            if (actionLabel.toLowerCase() === "pack" || actionLabel.toLowerCase() === "repack") actionLabel = "Shipping Proof";
+
+                            return (
+                              <div key={idx} className="relative group">
+                                <span className={`absolute -left-[26px] top-1 w-3 h-3 rounded-full border-2 border-white ring-4 ring-transparent transition duration-150 ${dotColor}`} />
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-bold text-[#1f1f1f]">{actionLabel}</span>
+                                    <span className="text-[10px] text-[#5f6368] font-semibold bg-[#f1f3f4] px-2 py-0.5 rounded-full select-none">
+                                      by {log.actionBy || "System"}
+                                    </span>
+                                  </div>
+                                  {log.remark && (
+                                    <span className="text-[11px] text-[#5F6368] leading-relaxed break-words">
+                                      {log.remark}
+                                    </span>
+                                  )}
+                                  {log.photoUrl && (
+                                    <a href={log.photoUrl} target="_blank" rel="noreferrer" className="inline-block mt-1.5 overflow-hidden rounded-lg border border-[#E0E2E6] w-36 h-36 cursor-pointer">
+                                      <img src={log.photoUrl} alt="Log Attachment" className="w-full h-full object-cover hover:scale-105 transition duration-150" />
+                                    </a>
+                                  )}
+                                  <span className="text-[10px] text-[#9aa0a6] font-medium font-mono select-none">
+                                    {formatDateTime(log.timestamp)}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })()}

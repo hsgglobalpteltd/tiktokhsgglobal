@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import * as React from "react";
 
 interface MenuOption {
   title: string;
@@ -8,6 +11,27 @@ interface MenuOption {
 }
 
 export default function Home() {
+  const [allowedPages, setAllowedPages] = React.useState<string[]>([]);
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+    try {
+      const cached = sessionStorage.getItem("terminal_allowed_pages");
+      if (cached) {
+        setAllowedPages(JSON.parse(cached));
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("terminal_auth");
+    sessionStorage.removeItem("terminal_allowed_pages");
+    sessionStorage.removeItem("terminal_name");
+    sessionStorage.removeItem("terminal_ip");
+    window.location.reload();
+  };
+
   const options: MenuOption[] = [
     {
       title: "Dashboard",
@@ -62,16 +86,40 @@ export default function Home() {
     }
   ];
 
+  if (!mounted) {
+    return (
+      <div className="menu-container">
+        <div className="menu-grid" />
+      </div>
+    );
+  }
+
+  // Filter options based on allowedPages
+  const visibleOptions = options.filter(opt => allowedPages.includes(opt.title));
+
   return (
-    <div className="menu-container">
+    <div className="menu-container flex flex-col gap-10">
       <div className="menu-grid">
-        {options.map((option) => (
+        {visibleOptions.map((option) => (
           <Link key={option.title} href={option.href} className="menu-card">
             <div className="card-icon">{option.icon}</div>
             <h3 className="card-title">{option.title}</h3>
             <p className="card-desc">{option.description}</p>
           </Link>
         ))}
+      </div>
+
+      {/* Logout Terminal Button */}
+      <div className="flex justify-center w-full">
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs font-bold rounded-lg transition duration-150 shadow-md cursor-pointer outline-none select-none"
+        >
+          <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          Logout Terminal
+        </button>
       </div>
     </div>
   );
