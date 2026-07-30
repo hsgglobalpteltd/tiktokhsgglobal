@@ -41,6 +41,9 @@ interface Order {
   awb_printed?: boolean;
   issues?: IssueItem[];
   logs?: any[];
+  before_pack_photo?: string;
+  transit_at?: number;
+  delivered_at?: number;
 }
 
 interface Shop {
@@ -1632,21 +1635,67 @@ export default function OrdersPage() {
                 </svg>
               </button>
             </div>
-
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-5">
               {(() => {
                 // Compile logs chronologically
                 const logsList = [...(selectedOrderForLogs.logs || [])];
                 
-                // Fallback for pack status if not in logs but in fields
-                const hasPackLog = logsList.some((l: any) => (l.action || "").toLowerCase().includes("pack"));
+                // Fallback for packing proof photo
+                const hasPackingLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act.includes("before pack") || act.includes("packing proof");
+                });
+                if (selectedOrderForLogs.before_pack_photo && !hasPackingLog) {
+                  logsList.push({
+                    action: "Packing Proof",
+                    actionBy: "Operator",
+                    remark: "Scanned items in bucket before packing",
+                    timestamp: selectedOrderForLogs.packed_at ? (selectedOrderForLogs.packed_at - 60000) : (selectedOrderForLogs.create_time * 1000 + 120000),
+                    photoUrl: selectedOrderForLogs.before_pack_photo
+                  });
+                }
+
+                // Fallback for shipping proof photo (packed_at)
+                const hasPackLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act === "pack" || act === "packed" || act === "shipping proof" || act === "shipping proof (repacked)";
+                });
                 if (selectedOrderForLogs.packed_at && !hasPackLog) {
                   logsList.push({
-                    action: "Pack",
+                    action: "Shipping Proof",
                     actionBy: selectedOrderForLogs.packed_by || "Operator",
                     remark: "Order packed successfully",
-                    timestamp: selectedOrderForLogs.packed_at
+                    timestamp: selectedOrderForLogs.packed_at,
+                    photoUrl: selectedOrderForLogs.proof_photo || ""
+                  });
+                }
+
+                // Fallback for In Transit
+                const hasTransitLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act.includes("transit") || act.includes("shipped") || act.includes("handover") || act.includes("collect");
+                });
+                if (selectedOrderForLogs.transit_at && !hasTransitLog) {
+                  logsList.push({
+                    action: "In Transit",
+                    actionBy: "System",
+                    remark: "Status updated to Transit (via TikTok Sync)",
+                    timestamp: selectedOrderForLogs.transit_at
+                  });
+                }
+
+                // Fallback for Delivered
+                const hasDeliveredLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act.includes("delivered") || act.includes("completed");
+                });
+                if (selectedOrderForLogs.delivered_at && !hasDeliveredLog) {
+                  logsList.push({
+                    action: "Delivered",
+                    actionBy: "System",
+                    remark: "Status updated to Delivered (via TikTok Sync)",
+                    timestamp: selectedOrderForLogs.delivered_at
                   });
                 }
                 
@@ -1666,85 +1715,33 @@ export default function OrdersPage() {
                   return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
                 };
 
-                // Extract Transit and Delivered timestamps (with fallback to logs)
-                const transitTime = (selectedOrderForLogs as any).transit_at || 
-                  logsList.find((l: any) => /transit|shipped|handover|collect/i.test(l.action || ""))?.timestamp || 0;
-                
-                const deliveredTime = (selectedOrderForLogs as any).delivered_at || 
-                  logsList.find((l: any) => /delivered|completed/i.test(l.action || ""))?.timestamp || 0;
-
-                const packingImg = (selectedOrderForLogs as any).before_pack_photo || 
-                  logsList.find((l: any) => /before pack|pack start/i.test(l.action || ""))?.photoUrl || "";
-                  
-                const shippingImg = selectedOrderForLogs.proof_photo || 
-                  logsList.find((l: any) => /^(re)?pack$|pack done|shipped/i.test(l.action || ""))?.photoUrl || "";
-
                 return (
-                  <div className="flex flex-col gap-6">
-                    {/* Key Milestones & Proof Images */}
-                    {(packingImg || shippingImg || transitTime || deliveredTime) && (
-                      <div className="border border-[#E0E2E6] rounded-xl bg-[#F8F9FA] p-4 flex flex-col gap-4">
-                        
-                        {/* Timestamps Grid */}
-                        <div className="grid grid-cols-2 gap-4 border-b border-[#E0E2E6] pb-3 text-xs">
-                          <div>
-                            <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider block mb-1">Transit Time</span>
-                            <span className="font-semibold font-mono text-[#1F1F1F]">
-                              {transitTime ? formatDateTime(transitTime) : "Not In Transit"}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider block mb-1">Delivered Time</span>
-                            <span className="font-semibold font-mono text-[#1F1F1F]">
-                              {deliveredTime ? formatDateTime(deliveredTime) : "Not Delivered Yet"}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Images Row */}
-                        {(packingImg || shippingImg) && (
-                          <div className="flex gap-4">
-                            {packingImg && (
-                              <div className="flex-1 flex flex-col gap-1.5 items-center bg-white border border-[#E0E2E6] p-2.5 rounded-lg">
-                                <span className="text-[9px] font-bold text-[#5F6368] uppercase tracking-wider">Packing Img</span>
-                                <a href={packingImg} target="_blank" rel="noreferrer" className="relative group overflow-hidden rounded-md border border-[#E0E2E6] aspect-square w-full max-w-[100px] flex items-center justify-center bg-[#F1F3F4] cursor-pointer">
-                                  <img src={packingImg} alt="Packing Proof" className="w-full h-full object-cover group-hover:scale-105 transition duration-200" />
-                                </a>
-                              </div>
-                            )}
-                            {shippingImg && (
-                              <div className="flex-1 flex flex-col gap-1.5 items-center bg-white border border-[#E0E2E6] p-2.5 rounded-lg">
-                                <span className="text-[9px] font-bold text-[#5F6368] uppercase tracking-wider">Shipping Img</span>
-                                <a href={shippingImg} target="_blank" rel="noreferrer" className="relative group overflow-hidden rounded-md border border-[#E0E2E6] aspect-square w-full max-w-[100px] flex items-center justify-center bg-[#F1F3F4] cursor-pointer">
-                                  <img src={shippingImg} alt="Shipping Proof" className="w-full h-full object-cover group-hover:scale-105 transition duration-200" />
-                                </a>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Log Timeline */}
+                  <div className="flex flex-col gap-4">
                     <div>
-                      <h4 className="text-[11px] font-bold text-[#5F6368] uppercase tracking-wider mb-3">Timeline Events</h4>
+                      <h4 className="text-[11px] font-bold text-[#5F6368] uppercase tracking-wider mb-4">Timeline Events</h4>
                       {logsList.length === 0 ? (
                         <div className="text-center text-xs text-[#5F6368] italic py-8 border border-dashed border-[#E0E2E6] rounded-xl">
                           No activity logs recorded for this order.
                         </div>
                       ) : (
-                        <div className="relative border-l border-[#E0E2E6] ml-2.5 pl-5 flex flex-col gap-5">
+                        <div className="relative border-l border-[#E0E2E6] ml-2.5 pl-6 flex flex-col gap-6">
                           {logsList.map((log: any, idx: number) => {
-                            const isAWBAction = ["create awb", "print awb", "reprint awb"].includes((log.action || "").toLowerCase());
-                            const isPackAction = ["pack", "packed", "before pack"].includes((log.action || "").toLowerCase());
-                            const isCollectAction = ["collect", "collected", "handover", "transit"].includes((log.action || "").toLowerCase());
-                            const isSync = (log.action || "").toLowerCase().includes("sync");
+                            const actionLower = (log.action || "").toLowerCase();
+                            
+                            const isAWBAction = ["create awb", "print awb", "reprint awb"].includes(actionLower);
+                            const isPackingProof = ["before pack", "packing proof"].includes(actionLower);
+                            const isShippingProof = ["pack", "repack", "shipping proof", "shipping proof (repacked)"].includes(actionLower);
+                            const isTransit = ["collect", "collected", "handover", "transit", "in transit"].includes(actionLower);
+                            const isDelivered = ["delivered", "completed"].includes(actionLower);
+                            const isSync = actionLower.includes("sync");
 
                             let dotColor = "bg-gray-400";
-                            if (isAWBAction) dotColor = "bg-[#0b57d0]";
-                            else if (isPackAction) dotColor = "bg-[#137333]";
-                            else if (isCollectAction) dotColor = "bg-[#b76e00]";
-                            else if (isSync) dotColor = "bg-slate-500";
+                            if (isAWBAction) dotColor = "bg-[#0b57d0]"; // Blue
+                            else if (isPackingProof) dotColor = "bg-[#137333]"; // Green
+                            else if (isShippingProof) dotColor = "bg-[#007a87]"; // Teal/Cyan
+                            else if (isTransit) dotColor = "bg-[#b76e00]"; // Orange
+                            else if (isDelivered) dotColor = "bg-[#681da8]"; // Purple
+                            else if (isSync) dotColor = "bg-[#5f6368]"; // Slate/Gray
 
                             let actionLabel = log.action || "";
                             if (actionLabel.toLowerCase() === "before pack") actionLabel = "Packing Proof";
@@ -1752,8 +1749,8 @@ export default function OrdersPage() {
 
                             return (
                               <div key={idx} className="relative group">
-                                <span className={`absolute -left-[26px] top-1 w-3 h-3 rounded-full border-2 border-white ring-4 ring-transparent transition duration-150 ${dotColor}`} />
-                                <div className="flex flex-col gap-1">
+                                <span className={`absolute -left-[32px] top-1 w-3.5 h-3.5 rounded-full border-2 border-white ring-4 ring-transparent transition duration-150 ${dotColor}`} />
+                                <div className="flex flex-col gap-1.5">
                                   <div className="flex items-center justify-between gap-2">
                                     <span className="text-xs font-bold text-[#1f1f1f]">{actionLabel}</span>
                                     <span className="text-[10px] text-[#5f6368] font-semibold bg-[#f1f3f4] px-2 py-0.5 rounded-full select-none">
@@ -1761,16 +1758,19 @@ export default function OrdersPage() {
                                     </span>
                                   </div>
                                   {log.remark && (
-                                    <span className="text-[11px] text-[#5F6368] leading-relaxed break-words">
+                                    <span className="text-[11px] text-[#5F6368] leading-relaxed break-words font-medium">
                                       {log.remark}
                                     </span>
                                   )}
                                   {log.photoUrl && (
-                                    <a href={log.photoUrl} target="_blank" rel="noreferrer" className="inline-block mt-1.5 overflow-hidden rounded-lg border border-[#E0E2E6] w-36 h-36 cursor-pointer">
-                                      <img src={log.photoUrl} alt="Log Attachment" className="w-full h-full object-cover hover:scale-105 transition duration-150" />
-                                    </a>
+                                    <div className="mt-2 border border-[#E0E2E6] rounded-xl bg-[#F8F9FA] p-2.5 max-w-[200px] flex flex-col gap-1.5 items-center">
+                                      <span className="text-[9px] font-bold text-[#5f6368] uppercase tracking-wide select-none">Proof Attachment</span>
+                                      <a href={log.photoUrl} target="_blank" rel="noreferrer" className="relative group overflow-hidden rounded-lg border border-[#E0E2E6] aspect-square w-full flex items-center justify-center bg-white cursor-pointer">
+                                        <img src={log.photoUrl} alt="Log Attachment" className="w-full h-full object-cover group-hover:scale-105 transition duration-150" />
+                                      </a>
+                                    </div>
                                   )}
-                                  <span className="text-[10px] text-[#9aa0a6] font-medium font-mono select-none">
+                                  <span className="text-[10px] text-[#9aa0a6] font-medium font-mono select-none mt-1">
                                     {formatDateTime(log.timestamp)}
                                   </span>
                                 </div>
