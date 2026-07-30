@@ -643,7 +643,7 @@ export default function SettingPage() {
               <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
                 Trigger a manual test print spooler. This will fetch all active unprinted orders from the server, verify the 5-minute grace period, generate their AWBs, merge them, and print them in a combined document.
               </p>
-              <div style={{ marginTop: "8px" }}>
+              <div style={{ marginTop: "8px", display: "flex", gap: "8px" }}>
                 <button
                   type="button"
                   onClick={handleTestPrint}
@@ -660,6 +660,33 @@ export default function SettingPage() {
                 >
                   {countdown > 0 ? `Pending Print (${countdown}s)` : "Test Print"}
                 </button>
+                
+                {countdown > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (countdownIntervalRef.current) {
+                        clearInterval(countdownIntervalRef.current);
+                        countdownIntervalRef.current = null;
+                      }
+                      setCountdown(0);
+                      showToast("Test print countdown stopped.");
+                    }}
+                    className="btn-secondary"
+                    style={{
+                      padding: "8px 16px",
+                      fontSize: "12px",
+                      fontWeight: "600",
+                      height: "36px",
+                      borderRadius: "8px",
+                      borderColor: "#ea868f",
+                      color: "#dc3545",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Stop Print
+                  </button>
+                )}
               </div>
             </div>
           </div>

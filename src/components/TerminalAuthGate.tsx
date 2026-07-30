@@ -26,6 +26,13 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   const [pinError, setPinError] = React.useState(false);
 
   // Console Log States
+  const [autoPrintPaused, setAutoPrintPaused] = React.useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("auto_print_paused") === "true";
+    }
+    return false;
+  });
+
   const [isConsoleOpen, setIsConsoleOpen] = React.useState(false);
   const [printLogs, setPrintLogs] = React.useState<PrintLog[]>([]);
   const processedOrderIds = React.useRef<Set<string>>(new Set());
@@ -154,6 +161,9 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
     async function printWorker() {
       if (printingInProgress.current) return;
+      if (autoPrintPaused) {
+        return;
+      }
       printingInProgress.current = true;
 
       try {
@@ -256,7 +266,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     printWorker(); // Run immediately on mount
 
     return () => clearInterval(timer);
-  }, [status, autoPrintEnabled, terminalName, addLog, printPdf]);
+  }, [status, autoPrintEnabled, terminalName, addLog, printPdf, autoPrintPaused]);
 
   const handleKeypadPress = (val: string) => {
     if (enteredPin.length >= 4) return;
@@ -424,15 +434,32 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
             <div className="w-80 h-72 bg-[#1f1f1f] rounded-xl border border-zinc-700 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-150 mb-2">
               <header className="px-4 py-2 bg-zinc-800 border-b border-zinc-700 flex justify-between items-center text-xs font-bold text-zinc-300">
                 <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+                  <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${autoPrintPaused ? "bg-red-500" : "bg-green-500"}`} />
                   <span>{terminalName} - Auto Print Log</span>
                 </div>
-                <button 
-                  onClick={() => setIsConsoleOpen(false)}
-                  className="text-zinc-400 hover:text-white transition"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const newPaused = !autoPrintPaused;
+                      setAutoPrintPaused(newPaused);
+                      localStorage.setItem("auto_print_paused", String(newPaused));
+                      addLog("info", newPaused ? "Auto Print paused." : "Auto Print resumed.");
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition outline-none ${
+                      autoPrintPaused 
+                        ? "bg-green-600 hover:bg-green-700 text-white" 
+                        : "bg-red-600 hover:bg-red-700 text-white"
+                    }`}
+                  >
+                    {autoPrintPaused ? "Resume" : "Pause"}
+                  </button>
+                  <button 
+                    onClick={() => setIsConsoleOpen(false)}
+                    className="text-zinc-400 hover:text-white transition text-xs"
+                  >
+                    ✕
+                  </button>
+                </div>
               </header>
               
               {/* Scrollable logs viewport */}
