@@ -227,11 +227,23 @@ export default function ScanPackPage() {
       if (!silent) {
         setIsLoading(true);
       }
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?_t=" + Date.now(), { cache: "no-store" });
+      const activeOnlyParam = silent ? "&active_only=true" : "";
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as { orders: any[]; shops?: any[] };
-        setOrders(data.orders || []);
         setShops(data.shops || []);
+        if (silent) {
+          setOrders(prev => {
+            const updatedOrders = data.orders || [];
+            const prevMap = new Map(prev.map(o => [o.id, o]));
+            updatedOrders.forEach((o: any) => {
+              prevMap.set(o.id, o);
+            });
+            return Array.from(prevMap.values()).sort((a, b) => b.create_time - a.create_time);
+          });
+        } else {
+          setOrders(data.orders || []);
+        }
       } else {
         if (!silent) {
           showToast("Failed to load orders list");
@@ -829,19 +841,29 @@ export default function ScanPackPage() {
     
     pollingIntervalRef.current = setInterval(async () => {
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?_t=" + Date.now(), { cache: "no-store" });
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&active_only=true&_t=" + Date.now(), { cache: "no-store" });
         if (res.ok) {
           const data = await res.json() as { orders: any[]; shops?: any[] };
           const currentOrders = data.orders || [];
-          const currentPackedCount = currentOrders.filter(o => o.system_status === "packed").length;
+          
+          let mergedOrders: Order[] = [];
+          setOrders(prev => {
+            const prevMap = new Map(prev.map(o => [o.id, o]));
+            currentOrders.forEach((o: any) => {
+              prevMap.set(o.id, o);
+            });
+            mergedOrders = Array.from(prevMap.values()).sort((a, b) => b.create_time - a.create_time);
+            return mergedOrders;
+          });
+
+          const currentPackedCount = mergedOrders.filter(o => o.system_status === "packed").length;
           
           if (currentPackedCount > previousPackedCount) {
-            const newlyPacked = currentOrders.find(co => {
+            const newlyPacked = mergedOrders.find(co => {
               const old = orders.find(oo => oo.id === co.id);
               return co.system_status === "packed" && (!old || old.system_status !== "packed");
             });
 
-            setOrders(currentOrders);
             if (data.shops) setShops(data.shops);
 
             playBeep();
