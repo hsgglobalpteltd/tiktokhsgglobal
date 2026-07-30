@@ -386,7 +386,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         }
 
         if (!found) {
-          addLog("warning", "Could not calculate next scheduled sync time. Retrying in 15 minutes.");
+          addLog("info", "Could not calculate next scheduled sync time. Retrying in 15 minutes.");
           if (printTimerRef.current) clearTimeout(printTimerRef.current);
           printTimerRef.current = setTimeout(async () => {
             await printWorker();
