@@ -208,40 +208,57 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
         for (const order of unprintedOrders) {
           try {
-            addLog("info", `Generating AWB for order ${order.id}...`);
-            
-            const createRes = await fetch(`${WORKER_URL}/api/tiktok/orders/create-awb`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                order_id: order.id,
-                shop_id: order.shop_id,
-                action_by: terminalName
-              })
-            });
+            let docUrl = "";
+            const cachedAwb = order.proof_photo || "";
+            const hasTracking = order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "";
 
-            if (!createRes.ok) {
-              const errTxt = await createRes.text();
-              throw new Error(errTxt || "AWB creation failed");
-            }
+            if (cachedAwb && cachedAwb.startsWith("http")) {
+              addLog("info", `Using cached AWB from database for order ${order.id}`);
+              docUrl = cachedAwb;
+            } else if (hasTracking) {
+              addLog("info", `AWB tracking number already exists for order ${order.id}. Fetching document URL...`);
+              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+              if (!printRes.ok) {
+                throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
+              }
+              const printData = await printRes.json();
+              if (!printData.success || !printData.doc_url) {
+                throw new Error(printData.error || "No document URL returned from server");
+              }
+              docUrl = printData.doc_url;
+            } else {
+              addLog("info", `Generating AWB for order ${order.id}...`);
+              const createRes = await fetch(`${WORKER_URL}/api/tiktok/orders/create-awb`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  order_id: order.id,
+                  shop_id: order.shop_id,
+                  action_by: terminalName
+                })
+              });
 
-            const createData = await createRes.json();
-            if (!createData.success) {
-              throw new Error(createData.error || "Failed to arrange shipment");
-            }
+              if (!createRes.ok) {
+                const errTxt = await createRes.text();
+                throw new Error(errTxt || "AWB creation failed");
+              }
 
-            // Call print-awb GET request to retrieve doc_url
-            addLog("info", `Retrieving AWB document URL for order ${order.id}...`);
-            const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-            if (!printRes.ok) {
-              throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
-            }
-            const printData = await printRes.json();
-            if (!printData.success || !printData.doc_url) {
-              throw new Error(printData.error || "No document URL returned from server");
-            }
+              const createData = await createRes.json();
+              if (!createData.success) {
+                throw new Error(createData.error || "Failed to arrange shipment");
+              }
 
-            const docUrl = printData.doc_url;
+              addLog("info", `Retrieving AWB document URL for order ${order.id}...`);
+              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+              if (!printRes.ok) {
+                throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
+              }
+              const printData = await printRes.json();
+              if (!printData.success || !printData.doc_url) {
+                throw new Error(printData.error || "No document URL returned from server");
+              }
+              docUrl = printData.doc_url;
+            }
 
             addLog("info", `AWB document generated. Spooling printing...`);
             await printPdf(docUrl, order.id, order.shop_id);

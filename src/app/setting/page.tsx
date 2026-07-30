@@ -265,27 +265,47 @@ export default function SettingPage() {
 
       for (const order of unprintedOrders) {
         try {
-          const createRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/create-awb", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              order_id: order.id,
-              shop_id: order.shop_id,
-              action_by: terminalName
-            })
-          });
-          if (createRes.ok) {
-            const createData = await createRes.json() as any;
-            if (createData.success) {
-              const printRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-              if (printRes.ok) {
-                const printData = await printRes.json() as any;
-                if (printData.success && printData.doc_url) {
-                  docUrls.push(printData.doc_url);
-                  printedOrdersInfo.push({ id: order.id, shop_id: order.shop_id });
+          let docUrl = "";
+          const cachedAwb = order.proof_photo || "";
+          const hasTracking = order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "";
+
+          if (cachedAwb && cachedAwb.startsWith("http")) {
+            docUrl = cachedAwb;
+          } else if (hasTracking) {
+            const printRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+            if (printRes.ok) {
+              const printData = await printRes.json() as any;
+              if (printData.success && printData.doc_url) {
+                docUrl = printData.doc_url;
+              }
+            }
+          } else {
+            const createRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/create-awb", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                order_id: order.id,
+                shop_id: order.shop_id,
+                action_by: terminalName
+              })
+            });
+            if (createRes.ok) {
+              const createData = await createRes.json() as any;
+              if (createData.success) {
+                const printRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+                if (printRes.ok) {
+                  const printData = await printRes.json() as any;
+                  if (printData.success && printData.doc_url) {
+                    docUrl = printData.doc_url;
+                  }
                 }
               }
             }
+          }
+
+          if (docUrl) {
+            docUrls.push(docUrl);
+            printedOrdersInfo.push({ id: order.id, shop_id: order.shop_id });
           }
         } catch (err) {
           console.error(`Failed to create AWB for order ${order.id}:`, err);
