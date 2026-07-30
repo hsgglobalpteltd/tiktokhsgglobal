@@ -266,12 +266,9 @@ export default function SettingPage() {
       for (const order of unprintedOrders) {
         try {
           let docUrl = "";
-          const cachedAwb = order.proof_photo || "";
           const hasTracking = order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "";
 
-          if (cachedAwb && cachedAwb.startsWith("http")) {
-            docUrl = cachedAwb;
-          } else if (hasTracking) {
+          if (hasTracking) {
             const printRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
             if (printRes.ok) {
               const printData = await printRes.json() as any;

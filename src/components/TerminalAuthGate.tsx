@@ -209,13 +209,9 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         for (const order of unprintedOrders) {
           try {
             let docUrl = "";
-            const cachedAwb = order.proof_photo || "";
             const hasTracking = order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "";
 
-            if (cachedAwb && cachedAwb.startsWith("http")) {
-              addLog("info", `Using cached AWB from database for order ${order.id}`);
-              docUrl = cachedAwb;
-            } else if (hasTracking) {
+            if (hasTracking) {
               addLog("info", `AWB tracking number already exists for order ${order.id}. Fetching document URL...`);
               const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
               if (!printRes.ok) {
