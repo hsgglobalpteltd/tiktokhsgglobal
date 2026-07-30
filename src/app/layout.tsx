@@ -3,8 +3,8 @@ import "./globals.css";
 import { TerminalAuthGate } from "../components/TerminalAuthGate";
 
 export const metadata: Metadata = {
-  title: "iB Bridge",
-  description: "Gmail-styled modular application suite.",
+  title: "Tiktok Fulfillment Platform - HSG Global Internal Bridge",
+  description: "Tiktok Fulfillment Platform - HSG Global Internal Bridge",
 };
 
 export default function RootLayout({
