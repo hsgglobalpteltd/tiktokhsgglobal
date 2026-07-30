@@ -111,24 +111,40 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
   // Helper function to print a PDF url in a hidden iframe (Chrome kiosk-printing friendly)
   const printPdf = React.useCallback((pdfUrl: string, orderId: string, shopId: string) => {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>(async (resolve, reject) => {
+      let iframe: HTMLIFrameElement | null = null;
+      let blobUrl = "";
       try {
-        const iframe = document.createElement("iframe");
+        // Fetch PDF bytes via backend proxy to avoid CORS blocks
+        const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(pdfUrl)}`;
+        const res = await fetch(proxyUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status} trying to download PDF`);
+        const blob = await res.blob();
+        blobUrl = URL.createObjectURL(blob);
+
+        iframe = document.createElement("iframe");
         iframe.style.position = "fixed";
         iframe.style.width = "0";
         iframe.style.height = "0";
         iframe.style.border = "none";
-        iframe.src = pdfUrl;
+        iframe.src = blobUrl;
         document.body.appendChild(iframe);
 
         let timeout = setTimeout(() => {
-          document.body.removeChild(iframe);
+          if (iframe && iframe.parentNode) {
+            document.body.removeChild(iframe);
+          }
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
           reject(new Error("Print spool timed out"));
-        }, 15000);
+        }, 20000);
 
         iframe.onload = () => {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
+          try {
+            iframe?.contentWindow?.focus();
+            iframe?.contentWindow?.print();
+          } catch (printErr) {
+            console.error("Failed to invoke print dialog on iframe", printErr);
+          }
 
           // Wait 4 seconds to allow print spooling buffer
           setTimeout(async () => {
@@ -139,15 +155,25 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
               if (!logRes.ok) {
                 console.warn("Failed to log print-awb in backend status tracker");
               }
-              document.body.removeChild(iframe);
+              if (iframe && iframe.parentNode) {
+                document.body.removeChild(iframe);
+              }
+              if (blobUrl) URL.revokeObjectURL(blobUrl);
               resolve();
             } catch (logErr) {
-              document.body.removeChild(iframe);
+              if (iframe && iframe.parentNode) {
+                document.body.removeChild(iframe);
+              }
+              if (blobUrl) URL.revokeObjectURL(blobUrl);
               resolve(); // Resolve anyway since print was triggered
             }
           }, 4000);
         };
       } catch (err) {
+        if (iframe && iframe.parentNode) {
+          document.body.removeChild(iframe);
+        }
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
         reject(err);
       }
     });
