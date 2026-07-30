@@ -35,14 +35,26 @@ export default function DashboardPage() {
   const fetchDashboardData = async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&_t=${Date.now()}`, {
+      const activeOnlyParam = silent ? "&active_only=true" : "";
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, {
         cache: "no-store"
       });
       if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
       const data = await res.json();
       if (data.success) {
-        setOrders(data.orders || []);
         setShops(data.shops || []);
+        if (silent) {
+          setOrders(prev => {
+            const updatedOrders = data.orders || [];
+            const prevMap = new Map(prev.map(o => [o.id, o]));
+            updatedOrders.forEach((o: any) => {
+              prevMap.set(o.id, o);
+            });
+            return Array.from(prevMap.values()).sort((a, b) => b.create_time - a.create_time);
+          });
+        } else {
+          setOrders(data.orders || []);
+        }
         setError(null);
       } else {
         throw new Error(data.error || "Unknown error fetching data");

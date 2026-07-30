@@ -122,7 +122,8 @@ export default function OrdersPage() {
       if (!silent) {
         setError(null);
       }
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=${sync}&_t=${Date.now()}`, {
+      const activeOnlyParam = silent ? "&active_only=true" : "";
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=${sync}${activeOnlyParam}&_t=${Date.now()}`, {
         cache: "no-store"
       });
       if (!res.ok) {
@@ -131,7 +132,18 @@ export default function OrdersPage() {
       const data = await res.json() as any;
       if (data.success) {
         setShops(data.shops || []);
-        setOrders(data.orders || []);
+        if (silent) {
+          setOrders(prev => {
+            const updatedOrders = data.orders || [];
+            const prevMap = new Map(prev.map(o => [o.id, o]));
+            updatedOrders.forEach((o: any) => {
+              prevMap.set(o.id, o);
+            });
+            return Array.from(prevMap.values()).sort((a, b) => b.create_time - a.create_time);
+          });
+        } else {
+          setOrders(data.orders || []);
+        }
         if (sync && !silent) {
           showToast("Orders refreshed successfully");
         }
