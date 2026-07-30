@@ -904,7 +904,7 @@ export default function ScanPackPage() {
       : [];
 
     if (type === "before") {
-      const log = logs.find((l: any) => l.action === "Before Pack");
+      const log = logs.find((l: any) => l.action === "Before Pack" || l.action === "Packing Proof");
       if (log) {
         return {
           timestamp: log.timestamp,
@@ -919,7 +919,7 @@ export default function ScanPackPage() {
       }
       return null;
     } else {
-      const log = logs.find((l: any) => l.action === "Pack" || l.action === "Repack");
+      const log = logs.find((l: any) => l.action === "Pack" || l.action === "Repack" || l.action === "Shipping Proof" || l.action === "Shipping Proof (Repacked)");
       if (log) {
         return {
           timestamp: log.timestamp,
