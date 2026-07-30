@@ -962,7 +962,7 @@ export default function ScanPackPage() {
 
   return (
     <div className="blank-route-page">
-      <TopBar title="Scan Pack" />
+      <TopBar title="Scan Parcel" />
 
       {/* Main Layout matches the Orders page layout exactly */}
       <div className="flex flex-col w-full h-[calc(100vh-32px)] px-6 pb-6 pt-2 box-border overflow-hidden select-none">

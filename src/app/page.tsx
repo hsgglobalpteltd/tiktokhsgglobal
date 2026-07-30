@@ -54,8 +54,8 @@ export default function Home() {
       )
     },
     {
-      title: "Scan Pack",
-      description: "Scan items barcode, verify pick logs, and submit packaging photo proof.",
+      title: "Scan Parcel",
+      description: "Scan parcel tracking numbers, verify order items, capture packaging photos, and print shipping labels.",
       href: "/scan-pack",
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
