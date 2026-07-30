@@ -358,7 +358,7 @@ function MobileScannerPageContent() {
           </span>
         </div>
         <button 
-          onClick={() => router.replace("/scan-pack")}
+          onClick={() => router.replace("/scan-parcel")}
           className="text-xs font-semibold px-3 py-1.5 rounded bg-[#333] hover:bg-[#444] text-white transition active:scale-95 animate-pulse"
         >
           Exit

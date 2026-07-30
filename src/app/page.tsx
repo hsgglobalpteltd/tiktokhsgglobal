@@ -56,7 +56,7 @@ export default function Home() {
     {
       title: "Scan Parcel",
       description: "Scan parcel tracking numbers, verify order items, capture packaging photos, and print shipping labels.",
-      href: "/scan-pack",
+      href: "/scan-parcel",
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h2M4 8h16M4 16h16" />

@@ -95,7 +95,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     const pageRouteMap: Record<string, string> = {
       "Dashboard": "/dashboard",
       "Orders": "/orders",
-      "Scan Parcel": "/scan-pack",
+      "Scan Parcel": "/scan-parcel",
       "Scan Handover": "/scan-handover",
       "Setting": "/setting"
     };
