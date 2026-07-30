@@ -54,6 +54,13 @@ interface Shop {
 export default function OrdersPage() {
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [orders, setOrders] = React.useState<Order[]>([]);
+  const [terminalName, setTerminalName] = React.useState("PC Office");
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const name = sessionStorage.getItem("terminal_name");
+      if (name) setTerminalName(name);
+    }
+  }, []);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -266,7 +273,7 @@ export default function OrdersPage() {
     }
     try {
       setAwbLoadingOrderId(orderId);
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(orderId)}&shop_id=${encodeURIComponent(shopId)}&action_by=Admin`, {
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(orderId)}&shop_id=${encodeURIComponent(shopId)}&action_by=${encodeURIComponent(terminalName)}`, {
         method: "GET"
       });
 
@@ -310,7 +317,7 @@ export default function OrdersPage() {
         if (!order) continue;
 
         try {
-          const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=Admin`, {
+          const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
             method: "GET"
           });
 
@@ -1649,7 +1656,7 @@ export default function OrdersPage() {
                 if (selectedOrderForLogs.before_pack_photo && !hasPackingLog) {
                   logsList.push({
                     action: "Packing Proof",
-                    actionBy: "Operator",
+                    actionBy: selectedOrderForLogs.packed_by || "Packer",
                     remark: "Scanned items in bucket before packing",
                     timestamp: selectedOrderForLogs.packed_at ? (selectedOrderForLogs.packed_at - 60000) : (selectedOrderForLogs.create_time * 1000 + 120000),
                     photoUrl: selectedOrderForLogs.before_pack_photo
@@ -1664,7 +1671,7 @@ export default function OrdersPage() {
                 if (selectedOrderForLogs.packed_at && !hasPackLog) {
                   logsList.push({
                     action: "Shipping Proof",
-                    actionBy: selectedOrderForLogs.packed_by || "Operator",
+                    actionBy: selectedOrderForLogs.packed_by || "Packer",
                     remark: "Order packed successfully",
                     timestamp: selectedOrderForLogs.packed_at,
                     photoUrl: selectedOrderForLogs.proof_photo || ""

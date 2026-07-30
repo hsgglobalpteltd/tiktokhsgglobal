@@ -83,6 +83,13 @@ export default function ScanPackPage() {
   const [manualInputCode, setManualInputCode] = React.useState("");
   const [manualFile, setManualFile] = React.useState<File | null>(null);
   const [isUploading, setIsUploading] = React.useState(false);
+  const [terminalName, setTerminalName] = React.useState("PC Office");
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const name = sessionStorage.getItem("terminal_name");
+      if (name) setTerminalName(name);
+    }
+  }, []);
 
   // Image zoom preview state
   const [zoomImgUrl, setZoomImgUrl] = React.useState<string | null>(null);
@@ -539,7 +546,7 @@ export default function ScanPackPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           order_id: orderId,
-          packed_by: "Operator",
+          packed_by: terminalName,
           is_after_pack: type === "after",
           reset: true
         })
@@ -669,7 +676,7 @@ export default function ScanPackPage() {
         },
         body: JSON.stringify({
           order_id: order.id,
-          packed_by: "Operator", // Default generic Operator actor
+          packed_by: terminalName,
           proof_photo: photoUrl,
           is_after_pack: isAfter,
           repack: forceRepack
