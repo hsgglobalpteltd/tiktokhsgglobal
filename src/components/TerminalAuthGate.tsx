@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { PDFDocument } from "pdf-lib";
 
 const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
 
@@ -38,6 +39,86 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   const processedOrderIds = React.useRef<Set<string>>(new Set());
   const printingInProgress = React.useRef(false);
   const printTimerRef = React.useRef<any>(null);
+
+  // Dragging States
+  const [position, setPosition] = React.useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = React.useState(false);
+  const dragStart = React.useRef({ x: 0, y: 0 });
+  const dragOffset = React.useRef({ x: 0, y: 0 });
+  const hasMovedRef = React.useRef(false);
+  
+  // Inactivity Timer
+  const [isLowOpacity, setIsLowOpacity] = React.useState(true);
+  const inactivityTimerRef = React.useRef<any>(null);
+
+  const startInactivityTimer = React.useCallback(() => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+    }
+    inactivityTimerRef.current = setTimeout(() => {
+      setIsConsoleOpen(false);
+      setIsLowOpacity(true);
+    }, 30000); // 30 seconds
+  }, []);
+
+  const clearInactivityTimer = React.useCallback(() => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+  }, []);
+
+  const handleMouseEnter = React.useCallback(() => {
+    clearInactivityTimer();
+    setIsLowOpacity(false);
+  }, [clearInactivityTimer]);
+
+  const handleMouseLeave = React.useCallback(() => {
+    startInactivityTimer();
+  }, [startInactivityTimer]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only drag on left click
+    setIsDragging(true);
+    hasMovedRef.current = false;
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    dragOffset.current = { ...position };
+    e.preventDefault();
+  };
+
+  React.useEffect(() => {
+    if (isConsoleOpen) {
+      startInactivityTimer();
+    }
+    return () => clearInactivityTimer();
+  }, [isConsoleOpen, startInactivityTimer, clearInactivityTimer]);
+
+  React.useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        hasMovedRef.current = true;
+      }
+      setPosition({
+        x: dragOffset.current.x + dx,
+        y: dragOffset.current.y + dy
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging]);
 
   const addLog = React.useCallback((type: "info" | "success" | "error", message: string) => {
     const now = new Date();
@@ -180,132 +261,238 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     });
   }, [terminalName]);
 
+  // Helper function to print a merged PDF Blob URL in a hidden iframe
+  const printMergedPdfs = React.useCallback((blobUrl: string, orders: { id: string; shop_id: string }[]) => {
+    return new Promise<void>((resolve, reject) => {
+      let iframe: HTMLIFrameElement | null = null;
+      try {
+        iframe = document.createElement("iframe");
+        iframe.style.position = "fixed";
+        iframe.style.width = "0";
+        iframe.style.height = "0";
+        iframe.style.border = "none";
+        iframe.src = blobUrl;
+        document.body.appendChild(iframe);
+
+        let timeout = setTimeout(() => {
+          if (iframe && iframe.parentNode) {
+            document.body.removeChild(iframe);
+          }
+          reject(new Error("Print spool timed out"));
+        }, 30000);
+
+        iframe.onload = () => {
+          try {
+            iframe?.contentWindow?.focus();
+            iframe?.contentWindow?.print();
+          } catch (printErr) {
+            console.error("Failed to invoke print dialog on iframe", printErr);
+          }
+
+          // Wait 5 seconds to allow print spooling buffer
+          setTimeout(async () => {
+            clearTimeout(timeout);
+            try {
+              // Log print status to backend for all orders in batch
+              for (const order of orders) {
+                try {
+                  const logRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+                  if (!logRes.ok) {
+                    console.warn(`Failed to log print-awb in backend for order ${order.id}`);
+                  }
+                } catch (logErr) {
+                  console.error(`Error logging print-awb for order ${order.id}:`, logErr);
+                }
+              }
+              if (iframe && iframe.parentNode) {
+                document.body.removeChild(iframe);
+              }
+              resolve();
+            } catch (err) {
+              if (iframe && iframe.parentNode) {
+                document.body.removeChild(iframe);
+              }
+              resolve(); // Resolve anyway since print was triggered
+            }
+          }, 5000);
+        };
+      } catch (err) {
+        if (iframe && iframe.parentNode) {
+          document.body.removeChild(iframe);
+        }
+        reject(err);
+      }
+    });
+  }, [terminalName]);
+
   // 3. Auto Print Loop Engine
+  const printWorker = React.useCallback(async (isManual = false) => {
+    if (printingInProgress.current) return;
+    if (autoPrintPaused) {
+      return;
+    }
+    printingInProgress.current = true;
+
+    try {
+      addLog("info", "Checking for new unprinted orders...");
+      const res = await fetch(`${WORKER_URL}/api/tiktok/orders?active_only=true&_t=${Date.now()}`);
+      if (!res.ok) throw new Error(`Fetch failed: ${res.statusText}`);
+      
+      const data = await res.json();
+      if (!data.success || !data.orders) throw new Error(data.error || "No orders returned");
+
+      const unprintedOrders = data.orders.filter((order: any) => {
+        const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
+        const isNotPrinted = !order.awb_printed;
+        
+        const statusLower = (order.actual_status || "").toLowerCase();
+        const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled", "completed"].includes(statusLower);
+
+        const syncTime = order.updated_at ? Number(order.updated_at) : (order.create_time * 1000);
+        const orderAge = Date.now() - syncTime;
+        const passesGracePeriod = isManual ? true : (orderAge >= 5 * 60 * 1000); // 5 minutes grace period
+        
+        if (isUnpacked && isNotPrinted && !cannotPrint && !passesGracePeriod) {
+          // Log once for grace period warning
+          if (!processedOrderIds.current.has(order.id)) {
+            addLog("info", `Order ${order.id} is within the 5-minute grace period. Waiting.`);
+            processedOrderIds.current.add(order.id); // Add to processed temp so we don't log it on every check
+          }
+        }
+
+        return isUnpacked && isNotPrinted && !cannotPrint && passesGracePeriod;
+      });
+
+      // Clear processed set for orders no longer in the pending list
+      const activeIds = new Set(data.orders.map((o: any) => o.id));
+      for (const id of processedOrderIds.current) {
+        if (!activeIds.has(id)) {
+          processedOrderIds.current.delete(id);
+        }
+      }
+
+      if (unprintedOrders.length === 0) {
+        printingInProgress.current = false;
+        return;
+      }
+
+      addLog("info", `Found ${unprintedOrders.length} pending unprinted orders.`);
+
+      // Phase 1: Create AWBs for orders that don't have tracking IDs
+      const ordersMissingAwb = unprintedOrders.filter((order: any) => !order.tracking_number || order.tracking_number === "N/A");
+      if (ordersMissingAwb.length > 0) {
+        addLog("info", `Detected ${ordersMissingAwb.length} orders missing AWB tracking numbers. Arranging shipments first...`);
+        let generatedAny = false;
+        for (const order of ordersMissingAwb) {
+          try {
+            addLog("info", `Generating AWB for order ${order.id}...`);
+            const awbRes = await fetch(`${WORKER_URL}/api/tiktok/orders/create-awb`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ order_id: order.id, shop_id: order.shop_id, action_by: terminalName })
+            });
+            if (!awbRes.ok) {
+              throw new Error(`Failed to create AWB: ${awbRes.statusText}`);
+            }
+            const awbData = await awbRes.json();
+            if (!awbData.success) {
+              throw new Error(awbData.error || "Failed to create AWB on TikTok");
+            }
+            addLog("success", `AWB created successfully for order ${order.id}.`);
+            generatedAny = true;
+          } catch (err: any) {
+            addLog("error", `ERROR: Failed to arrange shipment for order ${order.id} - ${err.message || err}`);
+          }
+        }
+        
+        // Dispatch global refresh event to refresh screen tables
+        window.dispatchEvent(new CustomEvent("db-refresh"));
+
+        if (generatedAny) {
+          addLog("info", "AWBs generated. Printing skipped for this run to allow tracking IDs to update. Will print next run.");
+          printingInProgress.current = false;
+          return; // Skip printing for this cycle to allow generated tracking IDs to sync
+        }
+      }
+
+      // Phase 2: Retrieve PDFs, Merge and Print
+      const ordersToPrint = [];
+      const pdfUrls = [];
+      for (const order of unprintedOrders) {
+        try {
+          addLog("info", `Retrieving AWB document URL for order ${order.id}...`);
+          const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
+          if (!printRes.ok) {
+            throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
+          }
+          const printData = await printRes.json();
+          if (!printData.success || !printData.doc_url) {
+            throw new Error(printData.error || "No document URL returned from server");
+          }
+          ordersToPrint.push({ id: order.id, shop_id: order.shop_id });
+          pdfUrls.push(printData.doc_url);
+        } catch (orderErr: any) {
+          const errStr = String(orderErr.message || orderErr);
+          addLog("error", `ERROR: Failed to retrieve PDF for order ${order.id} - ${errStr}`);
+          
+          // If the order has already been picked up (TikTok API error), mark as printed in DB to prevent infinite retry
+          if (errStr.toLowerCase().includes("pickup") || errStr.toLowerCase().includes("picked up")) {
+            addLog("info", `Order ${order.id} has already been picked up. Marking as printed to remove from queue.`);
+            try {
+              await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+            } catch (logErr) {
+              console.error(`Failed to mark picked-up order ${order.id} as printed:`, logErr);
+            }
+          } else {
+            processedOrderIds.current.delete(order.id); // Allow retry next loop
+          }
+        }
+      }
+
+      if (ordersToPrint.length === 0) {
+        printingInProgress.current = false;
+        return;
+      }
+
+      addLog("info", `Downloading and merging ${pdfUrls.length} AWB PDFs...`);
+      let mergedBlobUrl = "";
+      try {
+        const mergedPdf = await PDFDocument.create();
+        for (const url of pdfUrls) {
+          const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(url)}`;
+          const pdfRes = await fetch(proxyUrl);
+          if (!pdfRes.ok) throw new Error(`HTTP ${pdfRes.status} trying to download PDF`);
+          const pdfBytes = await pdfRes.arrayBuffer();
+          const pdf = await PDFDocument.load(pdfBytes);
+          const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+          copiedPages.forEach((page) => mergedPdf.addPage(page));
+        }
+        const mergedPdfBytes = await mergedPdf.save();
+        const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
+        mergedBlobUrl = URL.createObjectURL(blob);
+      } catch (mergeErr: any) {
+        throw new Error(`Failed to download and merge PDFs: ${mergeErr.message || mergeErr}`);
+      }
+
+      addLog("info", `AWBs merged successfully. Spooling print job...`);
+      await printMergedPdfs(mergedBlobUrl, ordersToPrint);
+      URL.revokeObjectURL(mergedBlobUrl);
+      addLog("success", `SUCCESS: Spooled merged print job for ${ordersToPrint.length} orders.`);
+
+      // Dispatch global refresh event to refresh screen tables
+      window.dispatchEvent(new CustomEvent("db-refresh"));
+
+    } catch (err: any) {
+      addLog("error", `Print loop worker failed: ${err.message || err}`);
+    } finally {
+      printingInProgress.current = false;
+    }
+  }, [status, autoPrintEnabled, terminalName, addLog, printPdf, printMergedPdfs, autoPrintPaused]);
+
   React.useEffect(() => {
     if (status !== "authenticated" || !autoPrintEnabled) return;
 
     addLog("info", `Auto Print Engine initialized for terminal [${terminalName}]`);
-
-    async function printWorker(isManual = false) {
-      if (printingInProgress.current) return;
-      if (autoPrintPaused) {
-        return;
-      }
-      printingInProgress.current = true;
-
-      try {
-        addLog("info", "Checking for new unprinted orders...");
-        const res = await fetch(`${WORKER_URL}/api/tiktok/orders?_t=${Date.now()}`);
-        if (!res.ok) throw new Error(`Fetch failed: ${res.statusText}`);
-        
-        const data = await res.json();
-        if (!data.success || !data.orders) throw new Error(data.error || "No orders returned");
-
-        const unprintedOrders = data.orders.filter((order: any) => {
-          const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
-          const isNotPrinted = !order.awb_printed;
-          
-          const statusLower = (order.actual_status || "").toLowerCase();
-          const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled"].includes(statusLower);
-
-          const syncTime = order.updated_at ? Number(order.updated_at) : (order.create_time * 1000);
-          const orderAge = Date.now() - syncTime;
-          const passesGracePeriod = isManual ? true : (orderAge >= 5 * 60 * 1000); // 5 minutes grace period
-          
-          if (isUnpacked && isNotPrinted && !cannotPrint && !passesGracePeriod) {
-            // Log once for grace period warning
-            if (!processedOrderIds.current.has(order.id)) {
-              addLog("info", `Order ${order.id} is within the 5-minute grace period. Waiting.`);
-              processedOrderIds.current.add(order.id); // Add to processed temp so we don't log it on every check
-            }
-          }
-
-          return isUnpacked && isNotPrinted && !cannotPrint && passesGracePeriod;
-        });
-
-        // Clear processed set for orders no longer in the pending list
-        const activeIds = new Set(data.orders.map((o: any) => o.id));
-        for (const id of processedOrderIds.current) {
-          if (!activeIds.has(id)) {
-            processedOrderIds.current.delete(id);
-          }
-        }
-
-        if (unprintedOrders.length === 0) {
-          printingInProgress.current = false;
-          return;
-        }
-
-        addLog("info", `Found ${unprintedOrders.length} pending unprinted orders.`);
-
-        for (const order of unprintedOrders) {
-          try {
-            let docUrl = "";
-            const hasTracking = order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "";
-
-            if (hasTracking) {
-              addLog("info", `AWB tracking number already exists for order ${order.id}. Fetching document URL...`);
-              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
-              if (!printRes.ok) {
-                throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
-              }
-              const printData = await printRes.json();
-              if (!printData.success || !printData.doc_url) {
-                throw new Error(printData.error || "No document URL returned from server");
-              }
-              docUrl = printData.doc_url;
-            } else {
-              addLog("info", `Generating AWB for order ${order.id}...`);
-              const createRes = await fetch(`${WORKER_URL}/api/tiktok/orders/create-awb`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  order_id: order.id,
-                  shop_id: order.shop_id,
-                  action_by: terminalName
-                })
-              });
-
-              if (!createRes.ok) {
-                const errTxt = await createRes.text();
-                throw new Error(errTxt || "AWB creation failed");
-              }
-
-              const createData = await createRes.json();
-              if (!createData.success) {
-                throw new Error(createData.error || "Failed to arrange shipment");
-              }
-
-              addLog("info", `Retrieving AWB document URL for order ${order.id}...`);
-              const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
-              if (!printRes.ok) {
-                throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
-              }
-              const printData = await printRes.json();
-              if (!printData.success || !printData.doc_url) {
-                throw new Error(printData.error || "No document URL returned from server");
-              }
-              docUrl = printData.doc_url;
-            }
-
-            addLog("info", `AWB document generated. Spooling printing...`);
-            await printPdf(docUrl, order.id, order.shop_id);
-            addLog("success", `SUCCESS: Printed label for order ${order.id}`);
-
-            // Dispatch global refresh event to refresh screen tables
-            window.dispatchEvent(new CustomEvent("db-refresh"));
-
-          } catch (orderErr: any) {
-            addLog("error", `ERROR: Failed to print order ${order.id} - ${orderErr.message || orderErr}`);
-            processedOrderIds.current.delete(order.id); // Allow retry next loop
-          }
-        }
-      } catch (loopErr: any) {
-        addLog("error", `Print loop worker failed: ${loopErr.message}`);
-      } finally {
-        printingInProgress.current = false;
-      }
-    }
 
     async function scheduleNextPrint() {
       try {
@@ -417,7 +604,66 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       if (printTimerRef.current) clearTimeout(printTimerRef.current);
       window.removeEventListener("tiktok-manual-sync", handleManualSync);
     };
-  }, [status, autoPrintEnabled, terminalName, addLog, printPdf, autoPrintPaused]);
+  }, [status, autoPrintEnabled, terminalName, addLog, printPdf, printMergedPdfs, autoPrintPaused, printWorker]);
+
+  // System Events Listener for System Log Console
+  React.useEffect(() => {
+    if (status !== "authenticated") return;
+
+    const handleSyncStart = (e: any) => {
+      const isManual = e.detail?.manual;
+      if (isManual) {
+        addLog("info", "[SYNC] Manual synchronization started...");
+      }
+    };
+
+    const handleSyncEnd = (e: any) => {
+      const { success, count, error, manual, details } = e.detail || {};
+      if (manual) {
+        if (success) {
+          addLog("success", `[SYNC] Manual synchronization complete.`);
+          if (details && details.length > 0) {
+            details.forEach((line: string) => addLog("success", `  ${line}`));
+          } else {
+            addLog("success", `  • No changes detected.`);
+          }
+        } else {
+          addLog("error", `[SYNC] ERROR: Manual synchronization failed - ${error || "Unknown error"}`);
+        }
+      }
+    };
+
+    const handleBgUpdate = (e: any) => {
+      const { count, details } = e.detail || {};
+      addLog("success", `[SYNC] Background sync check: Detected database changes:`);
+      if (details && details.length > 0) {
+        details.forEach((line: string) => addLog("success", `  ${line}`));
+      }
+    };
+
+    const handleAction = (e: any) => {
+      const { action, orderId, error } = e.detail || {};
+      if (action === "Create AWB") {
+        addLog("info", `[SYSTEM] Manually generating AWB for order ${orderId}...`);
+      } else if (action === "Create AWB Success") {
+        addLog("success", `[SYSTEM] AWB successfully generated for order ${orderId}.`);
+      } else if (action === "Create AWB Failure") {
+        addLog("error", `[SYSTEM] ERROR: Failed to generate AWB for order ${orderId} - ${error}`);
+      }
+    };
+
+    window.addEventListener("tiktok-sync-start", handleSyncStart);
+    window.addEventListener("tiktok-sync-end", handleSyncEnd);
+    window.addEventListener("tiktok-bg-update", handleBgUpdate);
+    window.addEventListener("tiktok-action", handleAction);
+
+    return () => {
+      window.removeEventListener("tiktok-sync-start", handleSyncStart);
+      window.removeEventListener("tiktok-sync-end", handleSyncEnd);
+      window.removeEventListener("tiktok-bg-update", handleBgUpdate);
+      window.removeEventListener("tiktok-action", handleAction);
+    };
+  }, [status, addLog]);
 
   const handleKeypadPress = (val: string) => {
     if (enteredPin.length >= 4) return;
@@ -575,38 +821,48 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   // Render children (Authenticated app) with the Print Console Drawer
   return (
     <>
-      {children}
-
-      {/* Floating Kiosk Console Drawer */}
-      {autoPrintEnabled && (
-        <div className="fixed bottom-4 right-4 z-50 font-primary select-none flex flex-col items-end">
+      {children}      {/* Floating Kiosk Console Drawer */}
+      {status === "authenticated" && (
+        <div 
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          style={{
+            transform: `translate(${position.x}px, ${position.y}px)`,
+            zIndex: 10000
+          }}
+          className={`fixed bottom-4 right-4 font-primary select-none flex flex-col items-end transition-opacity duration-300 ${
+            isLowOpacity ? "opacity-30" : "opacity-100"
+          }`}
+        >
           {/* Main expanded console body */}
           {isConsoleOpen && (
             <div className="w-80 h-72 bg-[#1f1f1f] rounded-xl border border-zinc-700 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-150 mb-2">
               <header className="px-4 py-2 bg-zinc-800 border-b border-zinc-700 flex justify-between items-center text-xs font-bold text-zinc-300">
                 <div className="flex items-center gap-1.5">
                   <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${autoPrintPaused ? "bg-red-500" : "bg-green-500"}`} />
-                  <span>{terminalName} - Auto Print Log</span>
+                  <span>{terminalName} System Log</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      const newPaused = !autoPrintPaused;
-                      setAutoPrintPaused(newPaused);
-                      localStorage.setItem("auto_print_paused", String(newPaused));
-                      addLog("info", newPaused ? "Auto Print paused." : "Auto Print resumed.");
-                    }}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition outline-none ${
-                      autoPrintPaused 
-                        ? "bg-green-600 hover:bg-green-700 text-white" 
-                        : "bg-red-600 hover:bg-red-700 text-white"
-                    }`}
-                  >
-                    {autoPrintPaused ? "Resume" : "Pause"}
-                  </button>
+                  {autoPrintEnabled && (
+                    <button
+                      onClick={() => {
+                        const newPaused = !autoPrintPaused;
+                        setAutoPrintPaused(newPaused);
+                        localStorage.setItem("auto_print_paused", String(newPaused));
+                        addLog("info", newPaused ? "Auto Print paused." : "Auto Print resumed.");
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition outline-none ${
+                        autoPrintPaused 
+                          ? "bg-green-600 hover:bg-green-700 text-white" 
+                          : "bg-red-600 hover:bg-red-700 text-white"
+                      }`}
+                    >
+                      {autoPrintPaused ? "Resume" : "Pause"}
+                    </button>
+                  )}
                   <button 
                     onClick={() => setIsConsoleOpen(false)}
-                    className="text-zinc-400 hover:text-white transition text-xs"
+                    className="text-zinc-400 hover:text-white transition text-xs font-bold px-1"
                   >
                     ✕
                   </button>
@@ -616,7 +872,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
               {/* Scrollable logs viewport */}
               <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5 font-mono text-[10px] text-zinc-400">
                 {printLogs.length === 0 ? (
-                  <span className="italic text-zinc-600 text-center mt-20">No print jobs processed yet.</span>
+                  <span className="italic text-zinc-600 text-center mt-20">No events logged yet.</span>
                 ) : (
                   printLogs.map((log, idx) => {
                     let typeColor = "text-zinc-400";
@@ -632,26 +888,48 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
                   })
                 )}
               </div>
-
-              <footer className="px-3 py-1.5 bg-zinc-800/80 border-t border-zinc-700 flex justify-between text-[9px] text-zinc-500 font-semibold">
+ 
+              <footer className="px-3 py-1.5 bg-zinc-800/80 border-t border-zinc-700 flex justify-between items-center text-[9px] text-zinc-500 font-semibold">
                 <span>Polling synced database: 30s</span>
-                <button 
-                  onClick={() => setPrintLogs([])}
-                  className="hover:text-zinc-300 transition"
-                >
-                  Clear Console
-                </button>
+                <div className="flex gap-3">
+                  {autoPrintEnabled && (
+                    <button 
+                      onClick={() => {
+                        addLog("info", "Manually triggering Auto Print check...");
+                        printWorker(true);
+                      }}
+                      className="text-blue-400 hover:text-blue-300 transition uppercase font-bold"
+                    >
+                      Auto Print
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => setPrintLogs([])}
+                    className="hover:text-zinc-300 transition"
+                  >
+                    Clear Console
+                  </button>
+                </div>
               </footer>
             </div>
           )}
-
+ 
           {/* Trigger button/badge */}
           <button
-            onClick={() => setIsConsoleOpen(prev => !prev)}
-            className="flex items-center gap-2 px-3 py-2 bg-[#1f1f1f] text-white border border-zinc-700 rounded-full shadow-lg hover:bg-zinc-800 transition outline-none cursor-pointer"
+            onMouseDown={handleMouseDown}
+            onClick={(e) => {
+              if (hasMovedRef.current) {
+                e.preventDefault();
+                return;
+              }
+              setIsConsoleOpen(prev => !prev);
+            }}
+            className={`flex items-center gap-2 px-3 py-2 bg-[#1f1f1f] text-white border border-zinc-700 rounded-full shadow-lg hover:bg-zinc-800 transition outline-none select-none ${
+              isDragging ? "cursor-grabbing" : "cursor-grab"
+            }`}
           >
             <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-xs font-bold">{terminalName} Auto Print</span>
+            <span className="text-xs font-bold">{terminalName} System Log</span>
             <svg 
               className={`w-3.5 h-3.5 text-zinc-400 transition-transform duration-150 ${isConsoleOpen ? "rotate-180" : ""}`}
               fill="none" 

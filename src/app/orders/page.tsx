@@ -51,6 +51,53 @@ interface Shop {
   name: string;
 }
 
+const formatStatusLabel = (status: string) => {
+  switch ((status || "").toUpperCase()) {
+    case "AWAITING_SHIPMENT": return "Awaiting Shipment";
+    case "AWAITING_COLLECTION": return "Awaiting Collection";
+    case "IN_TRANSIT":
+    case "SHIPPED":
+    case "PICK_UP":
+      return "In Transit";
+    case "DELIVERED":
+    case "COMPLETED":
+      return "Delivered";
+    case "CANCELLED": return "Cancelled";
+    default: return (status || "").toLowerCase().replace(/_/g, " ");
+  }
+};
+
+const computeOrderSyncStats = (prevOrders: Order[], newOrders: Order[]) => {
+  let newCount = 0;
+  const statusTransitions: Record<string, number> = {};
+
+  const prevMap = new Map(prevOrders.map(o => [o.id, o]));
+  for (const newOrd of newOrders) {
+    const prevOrd = prevMap.get(newOrd.id);
+    if (!prevOrd) {
+      newCount++;
+    } else {
+      const prevStatus = formatStatusLabel(prevOrd.actual_status);
+      const newStatus = formatStatusLabel(newOrd.actual_status);
+      if (prevStatus !== newStatus) {
+        const transitionKey = `${prevStatus} -> ${newStatus}`;
+        statusTransitions[transitionKey] = (statusTransitions[transitionKey] || 0) + 1;
+      }
+    }
+  }
+
+  const details: string[] = [];
+  if (newCount > 0) {
+    details.push(`• ${newCount} new order${newCount > 1 ? 's' : ''} fetched successfully`);
+  }
+  for (const [transition, count] of Object.entries(statusTransitions)) {
+    const parts = transition.split(" -> ");
+    details.push(`• ${count} order${count > 1 ? 's' : ''} status updated from ${parts[0]} to ${parts[1]} successfully`);
+  }
+
+  return { newCount, details };
+};
+
 export default function OrdersPage() {
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [orders, setOrders] = React.useState<Order[]>([]);
@@ -135,6 +182,15 @@ export default function OrdersPage() {
         if (silent) {
           setOrders(prev => {
             const updatedOrders = data.orders || [];
+            
+            // Compute sync changes
+            const stats = computeOrderSyncStats(prev, updatedOrders);
+            if (stats.newCount > 0 || stats.details.length > 0) {
+              window.dispatchEvent(new CustomEvent("tiktok-bg-update", {
+                detail: { count: stats.newCount, details: stats.details }
+              }));
+            }
+
             const prevMap = new Map(prev.map(o => [o.id, o]));
             updatedOrders.forEach((o: any) => {
               prevMap.set(o.id, o);
@@ -184,8 +240,17 @@ export default function OrdersPage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
   const handleRefreshClick = async () => {
     if (isLoading || isSyncing) return;
+    window.dispatchEvent(new CustomEvent("tiktok-sync-start", { detail: { manual: true } }));
+    
+    let prevOrdersList: Order[] = [];
+    setOrders(prev => {
+      prevOrdersList = prev;
+      return prev;
+    });
+
     try {
       setIsSyncing(true);
       setError(null);
@@ -199,6 +264,7 @@ export default function OrdersPage() {
         if (dataCache.success) {
           setShops(dataCache.shops || []);
           setOrders(dataCache.orders || []);
+          prevOrdersList = dataCache.orders || [];
         }
       }
 
@@ -214,7 +280,14 @@ export default function OrdersPage() {
       if (dataSync.success) {
         setShops(dataSync.shops || []);
         setOrders(dataSync.orders || []);
+        
+        // Compute manual sync changes
+        const stats = computeOrderSyncStats(prevOrdersList, dataSync.orders || []);
+        
         showToast("Orders refreshed successfully");
+        window.dispatchEvent(new CustomEvent("tiktok-sync-end", { 
+          detail: { success: true, count: stats.newCount, details: stats.details, manual: true } 
+        }));
         window.dispatchEvent(new CustomEvent("tiktok-manual-sync"));
       } else {
         throw new Error(dataSync.error || "Unknown error occurred");
@@ -222,6 +295,9 @@ export default function OrdersPage() {
     } catch (err: any) {
       console.error("Refresh error:", err);
       setError(err.message || "Failed to refresh orders.");
+      window.dispatchEvent(new CustomEvent("tiktok-sync-end", { 
+        detail: { success: false, error: err.message, manual: true } 
+      }));
     } finally {
       setIsSyncing(false);
     }
@@ -239,6 +315,7 @@ export default function OrdersPage() {
 
   const handleCreateAWB = async (orderId: string, shopId: string) => {
     if (awbLoadingOrderId) return;
+    window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB", orderId } }));
     try {
       setAwbLoadingOrderId(orderId);
       const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/create-awb`, {
@@ -257,6 +334,7 @@ export default function OrdersPage() {
       const data = await res.json() as any;
       if (data.success) {
         showToast(`AWB created successfully for order: ${orderId}`);
+        window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB Success", orderId } }));
         if (data.order) {
           setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...data.order } : o));
         } else {
@@ -268,11 +346,11 @@ export default function OrdersPage() {
     } catch (err: any) {
       console.error("Create AWB error:", err);
       showToast(`Error: ${err.message || "Failed to create AWB"}`);
+      window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB Failure", orderId, error: err.message } }));
     } finally {
       setAwbLoadingOrderId(null);
     }
   };
-
   const handlePrintAWB = async (orderId: string, shopId: string, force = false) => {
     if (awbLoadingOrderId) return;
     const order = orders.find(o => o.id === orderId);
