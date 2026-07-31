@@ -133,6 +133,15 @@ export default function SettingPage() {
       return;
     }
 
+    // Enforce start date cannot be before shop's Sync Start Date
+    const selectedShop = status?.shops?.find(s => s.shop_id === histShopId);
+    const shopSyncStartDate = selectedShop?.sync_start_date ? Number(selectedShop.sync_start_date) : 0;
+    if (shopSyncStartDate && start.getTime() < shopSyncStartDate) {
+      const formattedDate = new Date(shopSyncStartDate).toLocaleDateString('en-GB'); // dd/mm/yyyy
+      showToast(`Start date cannot be before the shop's Sync Start Date (${formattedDate})`);
+      return;
+    }
+
     // Check cooldown
     const lastSync = localStorage.getItem("last_historical_sync_timestamp");
     if (lastSync) {
@@ -151,7 +160,7 @@ export default function SettingPage() {
       const startMs = start.getTime();
       const endMs = end.getTime();
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&sync_start_date=${startMs}&sync_end_date=${endMs}&_t=${Date.now()}`, {
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&shop_id=${histShopId}&sync_start_date=${startMs}&sync_end_date=${endMs}&_t=${Date.now()}`, {
         cache: "no-store"
       });
 
@@ -482,6 +491,24 @@ export default function SettingPage() {
             const pdf = await PDFDocument.load(pdfBytes);
             const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
             copiedPages.forEach((page) => {
+              const { width, height } = page.getSize();
+              // A6 size in PDF points:
+              // 100mm = 100 * (72 / 25.4) = 283.46 points
+              // 150mm = 150 * (72 / 25.4) = 425.20 points
+              const targetWidth = 283.46;
+              const targetHeight = 425.20;
+
+              const scaleX = targetWidth / width;
+              const scaleY = targetHeight / height;
+              const scale = Math.min(scaleX, scaleY);
+
+              page.scaleContent(scale, scale);
+
+              const dx = (targetWidth - width * scale) / 2;
+              const dy = (targetHeight - height * scale) / 2;
+              page.translateContent(dx, dy);
+
+              page.setSize(targetWidth, targetHeight);
               mergedPdf.addPage(page);
             });
           }
@@ -556,6 +583,37 @@ export default function SettingPage() {
     syncTimeFrom !== initialSyncTimeFrom ||
     syncTimeTo !== initialSyncTimeTo ||
     JSON.stringify([...syncWorkingDays].sort()) !== JSON.stringify([...initialSyncWorkingDays].sort());
+
+  // Dynamic constraints for Historical Sync Date Pickers
+  const todayStr = new Date().toISOString().split('T')[0];
+  const selectedShop = status?.shops?.find(s => s.shop_id === histShopId);
+  const shopSyncStartDate = selectedShop?.sync_start_date ? Number(selectedShop.sync_start_date) : 0;
+  const shopSyncStartDateStr = shopSyncStartDate 
+    ? new Date(shopSyncStartDate).toISOString().split('T')[0] 
+    : undefined;
+
+  let minStartDate = shopSyncStartDateStr;
+  let maxStartDate = todayStr;
+  let minEndDate = histStartDate || shopSyncStartDateStr;
+  let maxEndDate = todayStr;
+
+  if (histStartDate) {
+    const startObj = new Date(histStartDate);
+    const maxEndObj = new Date(startObj.getTime() + 31 * 24 * 3600 * 1000);
+    const maxEndCalculatedStr = maxEndObj.toISOString().split('T')[0];
+    maxEndDate = maxEndCalculatedStr < todayStr ? maxEndCalculatedStr : todayStr;
+  }
+  if (histEndDate) {
+    maxStartDate = histEndDate;
+    const endObj = new Date(histEndDate);
+    const minStartObj = new Date(endObj.getTime() - 31 * 24 * 3600 * 1000);
+    const minStartCalculatedStr = minStartObj.toISOString().split('T')[0];
+    if (shopSyncStartDateStr) {
+      minStartDate = minStartCalculatedStr > shopSyncStartDateStr ? minStartCalculatedStr : shopSyncStartDateStr;
+    } else {
+      minStartDate = minStartCalculatedStr;
+    }
+  }
 
   return (
     <div className="blank-route-page" style={{ display: "block", overflowY: "auto", position: "fixed", inset: 0 }}>
@@ -735,7 +793,7 @@ export default function SettingPage() {
                 <div className="flex-1 min-w-[280px]">
                   <label className="form-label block mb-2">Sync Interval</label>
                   <div className="flex items-center gap-2">
-                    {["1H", "3H", "6H", "12H"].map((val) => {
+                    {["5M", "30M", "1H", "3H", "6H", "12H"].map((val) => {
                       const isSelected = syncInterval === val;
                       return (
                         <button
@@ -755,8 +813,8 @@ export default function SettingPage() {
                   </div>
                 </div>
 
-                {/* Time Sync Window (Only visible/enabled for 1H and 3H) */}
-                {(syncInterval === "1H" || syncInterval === "3H") && (
+                {/* Time Sync Window (Only visible/enabled for 5M, 30M, 1H and 3H) */}
+                {(syncInterval === "5M" || syncInterval === "30M" || syncInterval === "1H" || syncInterval === "3H") && (
                   <div className="flex-shrink-0" style={{ minWidth: "260px" }}>
                     <label className="form-label block mb-2">Time Sync Between</label>
                     <div className="flex items-center gap-2">
@@ -1007,6 +1065,7 @@ export default function SettingPage() {
                                   type="date" 
                                   value={shop.sync_start_date ? new Date(shop.sync_start_date).toISOString().split('T')[0] : ""} 
                                   disabled={shop.shop_id === "default"}
+                                  max={todayStr}
                                   onChange={async (e) => {
                                     if (e.target.value) {
                                       // Get local selected date timestamp
@@ -1155,6 +1214,8 @@ export default function SettingPage() {
                 <input
                   type="date"
                   value={histStartDate}
+                  min={minStartDate}
+                  max={maxStartDate}
                   onChange={(e) => setHistStartDate(e.target.value)}
                   className="form-input"
                   style={{ width: "160px", height: "36px", padding: "0 10px" }}
@@ -1166,6 +1227,8 @@ export default function SettingPage() {
                 <input
                   type="date"
                   value={histEndDate}
+                  min={minEndDate}
+                  max={maxEndDate}
                   onChange={(e) => setHistEndDate(e.target.value)}
                   className="form-input"
                   style={{ width: "160px", height: "36px", padding: "0 10px" }}

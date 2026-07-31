@@ -143,8 +143,21 @@ export default function OrdersPage() {
 
   // Month & Date filters state
   const [selectedMonth, setSelectedMonth] = React.useState<string>("all");
-  const [startDate, setStartDate] = React.useState<string>("");
-  const [endDate, setEndDate] = React.useState<string>("");
+  const [startDate, setStartDate] = React.useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 15);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  });
+  const [endDate, setEndDate] = React.useState<string>(() => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  });
   const [isFiltersExpanded, setIsFiltersExpanded] = React.useState(false);
 
   // Issues popup state
@@ -376,8 +389,41 @@ export default function OrdersPage() {
 
       const data = await res.json() as any;
       if (data.success && data.doc_url) {
-        window.open(data.doc_url, "_blank");
-        showToast("Opening AWB in a new tab...");
+        showToast("Resizing AWB to A6...");
+        const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(data.doc_url)}`;
+        const pdfRes = await fetch(proxyUrl);
+        if (!pdfRes.ok) {
+          throw new Error(`Failed to download PDF: ${pdfRes.status}`);
+        }
+        const pdfBytes = await pdfRes.arrayBuffer();
+        
+        const { PDFDocument } = await import("pdf-lib");
+        const singlePdf = await PDFDocument.load(pdfBytes);
+        const pages = singlePdf.getPages();
+        pages.forEach((page) => {
+          const { width, height } = page.getSize();
+          const targetWidth = 283.46;
+          const targetHeight = 425.20;
+
+          const scaleX = targetWidth / width;
+          const scaleY = targetHeight / height;
+          const scale = Math.min(scaleX, scaleY);
+
+          page.scaleContent(scale, scale);
+
+          const dx = (targetWidth - width * scale) / 2;
+          const dy = (targetHeight - height * scale) / 2;
+          page.translateContent(dx, dy);
+
+          page.setSize(targetWidth, targetHeight);
+        });
+
+        const singlePdfBytes = await singlePdf.save();
+        const blob = new Blob([singlePdfBytes as any], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+
+        window.open(blobUrl, "_blank");
+        showToast("Opening A6 AWB in a new tab...");
         // Update local state so AWB printed flag updates instantly
         setOrders(prev => prev.map(o => o.id === orderId ? { ...o, awb_printed: true } : o));
       } else {
@@ -449,6 +495,24 @@ export default function OrdersPage() {
           const pdf = await PDFDocument.load(pdfBytes);
           const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
           copiedPages.forEach((page) => {
+            const { width, height } = page.getSize();
+            // A6 size in PDF points:
+            // 100mm = 100 * (72 / 25.4) = 283.46 points
+            // 150mm = 150 * (72 / 25.4) = 425.20 points
+            const targetWidth = 283.46;
+            const targetHeight = 425.20;
+
+            const scaleX = targetWidth / width;
+            const scaleY = targetHeight / height;
+            const scale = Math.min(scaleX, scaleY);
+
+            page.scaleContent(scale, scale);
+
+            const dx = (targetWidth - width * scale) / 2;
+            const dy = (targetHeight - height * scale) / 2;
+            page.translateContent(dx, dy);
+
+            page.setSize(targetWidth, targetHeight);
             mergedPdf.addPage(page);
             mergedPageCount++;
           });
@@ -952,6 +1016,7 @@ export default function OrdersPage() {
                 <input
                   type="date"
                   value={startDate}
+                  max={new Date().toISOString().split("T")[0]}
                   onChange={(e) => setStartDate(e.target.value)}
                   className="border border-[#E0E2E6] rounded-full px-2.5 py-0.5 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
                 />
@@ -959,6 +1024,7 @@ export default function OrdersPage() {
                 <input
                   type="date"
                   value={endDate}
+                  max={new Date().toISOString().split("T")[0]}
                   onChange={(e) => setEndDate(e.target.value)}
                   className="border border-[#E0E2E6] rounded-full px-2.5 py-0.5 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
                 />

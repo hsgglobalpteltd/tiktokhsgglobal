@@ -348,28 +348,8 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         const statusLower = (order.actual_status || "").toLowerCase();
         const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled", "completed"].includes(statusLower);
 
-        const syncTime = order.updated_at ? Number(order.updated_at) : (order.create_time * 1000);
-        const orderAge = Date.now() - syncTime;
-        const passesGracePeriod = isManual ? true : (orderAge >= 5 * 60 * 1000); // 5 minutes grace period
-        
-        if (isUnpacked && isNotPrinted && !cannotPrint && !passesGracePeriod) {
-          // Log once for grace period warning
-          if (!processedOrderIds.current.has(order.id)) {
-            addLog("info", `Order ${order.id} is within the 5-minute grace period. Waiting.`);
-            processedOrderIds.current.add(order.id); // Add to processed temp so we don't log it on every check
-          }
-        }
-
-        return isUnpacked && isNotPrinted && !cannotPrint && passesGracePeriod;
+        return isUnpacked && isNotPrinted && !cannotPrint;
       });
-
-      // Clear processed set for orders no longer in the pending list
-      const activeIds = new Set(data.orders.map((o: any) => o.id));
-      for (const id of processedOrderIds.current) {
-        if (!activeIds.has(id)) {
-          processedOrderIds.current.delete(id);
-        }
-      }
 
       if (unprintedOrders.length === 0) {
         printingInProgress.current = false;
@@ -465,7 +445,27 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           const pdfBytes = await pdfRes.arrayBuffer();
           const pdf = await PDFDocument.load(pdfBytes);
           const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-          copiedPages.forEach((page) => mergedPdf.addPage(page));
+          copiedPages.forEach((page) => {
+            const { width, height } = page.getSize();
+            // A6 size in PDF points:
+            // 100mm = 100 * (72 / 25.4) = 283.46 points
+            // 150mm = 150 * (72 / 25.4) = 425.20 points
+            const targetWidth = 283.46;
+            const targetHeight = 425.20;
+
+            const scaleX = targetWidth / width;
+            const scaleY = targetHeight / height;
+            const scale = Math.min(scaleX, scaleY);
+
+            page.scaleContent(scale, scale);
+
+            const dx = (targetWidth - width * scale) / 2;
+            const dy = (targetHeight - height * scale) / 2;
+            page.translateContent(dx, dy);
+
+            page.setSize(targetWidth, targetHeight);
+            mergedPdf.addPage(page);
+          });
         }
         const mergedPdfBytes = await mergedPdf.save();
         const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
@@ -509,6 +509,89 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         const [toH, toM] = timeTo.split(":").map(Number);
         const fromMin = fromH * 60 + (fromM || 0);
         const toMin = toH * 60 + (toM || 0);
+
+        if (interval === "5M") {
+          const now = new Date();
+          const sgDate = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+          const sgDayStr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][sgDate.getUTCDay()];
+          const sgHour = sgDate.getUTCHours();
+          
+          let isInWindow = true;
+          const currentMin = sgHour * 60 + sgDate.getUTCMinutes();
+          
+          if (!workingDays.includes(sgDayStr) || currentMin < fromMin || currentMin > toMin) {
+            isInWindow = false;
+          }
+          
+          const delay = 5 * 60 * 1000;
+          const targetTime = new Date(Date.now() + delay);
+          if (printTimerRef.current) clearTimeout(printTimerRef.current);
+          
+          if (!isInWindow) {
+            addLog("info", `Outside working sync window. Next retry check in 5 minutes.`);
+            printTimerRef.current = setTimeout(async () => {
+              scheduleNextPrint();
+            }, delay);
+            return;
+          }
+          
+          addLog("info", `Next scheduled print check at: ${targetTime.toLocaleString()} (in 5 mins)`);
+          printTimerRef.current = setTimeout(async () => {
+            await printWorker();
+            scheduleNextPrint();
+          }, delay);
+          return;
+        }
+
+        if (interval === "30M") {
+          const now = new Date();
+          const sgDate = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+          const sgDayStr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][sgDate.getUTCDay()];
+          const sgHour = sgDate.getUTCHours();
+          
+          let isInWindow = true;
+          const currentMin = sgHour * 60 + sgDate.getUTCMinutes();
+          
+          if (!workingDays.includes(sgDayStr) || currentMin < fromMin || currentMin > toMin) {
+            isInWindow = false;
+          }
+          
+          const min = now.getMinutes();
+          let targetMin = 5;
+          let hourOffset = 0;
+          if (min < 5) {
+            targetMin = 5;
+          } else if (min < 35) {
+            targetMin = 35;
+          } else {
+            targetMin = 5;
+            hourOffset = 1;
+          }
+          
+          const targetTime = new Date();
+          targetTime.setHours(targetTime.getHours() + hourOffset);
+          targetTime.setMinutes(targetMin, 0, 0);
+          
+          if (!isInWindow) {
+            const delay = 30 * 60 * 1000;
+            const targetWait = new Date(Date.now() + delay);
+            addLog("info", `Outside working sync window. Next retry check at: ${targetWait.toLocaleString()} (in 30 mins)`);
+            if (printTimerRef.current) clearTimeout(printTimerRef.current);
+            printTimerRef.current = setTimeout(async () => {
+              scheduleNextPrint();
+            }, delay);
+            return;
+          }
+          
+          const delay = targetTime.getTime() - Date.now();
+          if (printTimerRef.current) clearTimeout(printTimerRef.current);
+          addLog("info", `Next scheduled print check at: ${targetTime.toLocaleString()} (in ${Math.round(delay / 60000)} mins)`);
+          printTimerRef.current = setTimeout(async () => {
+            await printWorker();
+            scheduleNextPrint();
+          }, delay);
+          return;
+        }
 
         let found = false;
         let testTime = new Date();
