@@ -186,7 +186,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
     addLog("info", `Auto Print Engine initialized for terminal [${terminalName}]`);
 
-    async function printWorker() {
+    async function printWorker(isManual = false) {
       if (printingInProgress.current) return;
       if (autoPrintPaused) {
         return;
@@ -210,7 +210,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
           const syncTime = order.updated_at ? Number(order.updated_at) : (order.create_time * 1000);
           const orderAge = Date.now() - syncTime;
-          const passesGracePeriod = orderAge >= 5 * 60 * 1000; // 5 minutes grace period
+          const passesGracePeriod = isManual ? true : (orderAge >= 5 * 60 * 1000); // 5 minutes grace period
           
           if (isUnpacked && isNotPrinted && !cannotPrint && !passesGracePeriod) {
             // Log once for grace period warning
@@ -405,13 +405,11 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     scheduleNextPrint();
 
     // Event listener for manual synchronizations
-    const handleManualSync = () => {
-      addLog("info", "Manual sync detected. Scheduling print check in 5 minutes...");
+    const handleManualSync = async () => {
+      addLog("info", "Manual sync detected. Starting print check immediately...");
       if (printTimerRef.current) clearTimeout(printTimerRef.current);
-      printTimerRef.current = setTimeout(async () => {
-        await printWorker();
-        scheduleNextPrint();
-      }, 5 * 60 * 1000);
+      await printWorker(true);
+      scheduleNextPrint();
     };
     window.addEventListener("tiktok-manual-sync", handleManualSync);
 

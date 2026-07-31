@@ -63,6 +63,138 @@ export default function SettingPage() {
   const [isEditingApi, setIsEditingApi] = React.useState(false);
   const [isSavingSync, setIsSavingSync] = React.useState(false);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+  
+  // Historical sync block states
+  const [histShopId, setHistShopId] = React.useState("");
+  const [histStartDate, setHistStartDate] = React.useState("");
+  const [histEndDate, setHistEndDate] = React.useState("");
+  const [histLogs, setHistLogs] = React.useState<string[]>([]);
+  const [isSyncingHistBlock, setIsSyncingHistBlock] = React.useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = React.useState(0);
+
+  // Load initial cooldown if any
+  React.useEffect(() => {
+    const lastSync = localStorage.getItem("last_historical_sync_timestamp");
+    if (lastSync) {
+      const elapsed = Date.now() - Number(lastSync);
+      const remaining = Math.ceil((3 * 60 * 1000 - elapsed) / 1000);
+      if (remaining > 0) {
+        setCooldownSeconds(remaining);
+      }
+    }
+  }, []);
+
+  // Cooldown countdown tick
+  React.useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const t = setTimeout(() => {
+      setCooldownSeconds(prev => prev - 1);
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [cooldownSeconds]);
+
+  const handleHistoricalSyncBlock = async () => {
+    if (!histShopId) {
+      showToast("Please select a shop first");
+      return;
+    }
+    if (!histStartDate || !histEndDate) {
+      showToast("Please select both start and end dates");
+      return;
+    }
+
+    const start = new Date(histStartDate);
+    const end = new Date(histEndDate);
+    const today = new Date();
+    
+    // Reset hours to compare dates only
+    today.setHours(23, 59, 59, 999);
+    
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    oneYearAgo.setHours(0,0,0,0);
+
+    if (start.getTime() < oneYearAgo.getTime()) {
+      showToast("Start date cannot be more than 1 year in the past");
+      return;
+    }
+    if (end.getTime() > today.getTime()) {
+      showToast("End date cannot be in the future");
+      return;
+    }
+    if (start.getTime() > end.getTime()) {
+      showToast("Start date must be before end date");
+      return;
+    }
+
+    const diffDays = Math.ceil((end.getTime() - start.getTime()) / (24 * 3600 * 1000));
+    if (diffDays > 31) {
+      showToast("Maximum date range is 31 days per sync request");
+      return;
+    }
+
+    // Check cooldown
+    const lastSync = localStorage.getItem("last_historical_sync_timestamp");
+    if (lastSync) {
+      const elapsed = Date.now() - Number(lastSync);
+      const remaining = Math.ceil((3 * 60 * 1000 - elapsed) / 1000);
+      if (remaining > 0) {
+        showToast(`Please wait ${remaining} seconds before requesting again (cooldown active)`);
+        return;
+      }
+    }
+
+    setIsSyncingHistBlock(true);
+    setHistLogs(prev => [...prev, `[System] Starting historical sync for range ${histStartDate} to ${histEndDate}...`]);
+
+    try {
+      const startMs = start.getTime();
+      const endMs = end.getTime();
+
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&sync_start_date=${startMs}&sync_end_date=${endMs}&_t=${Date.now()}`, {
+        cache: "no-store"
+      });
+
+      if (!res.ok) {
+        throw new Error(`Sync request failed with status: ${res.status}`);
+      }
+
+      const data = await res.json() as any;
+      if (data && data.success) {
+        // Record successful sync time to activate 3-minute cooldown
+        const nowMs = Date.now();
+        localStorage.setItem("last_historical_sync_timestamp", nowMs.toString());
+        setCooldownSeconds(180); // 3 minutes
+
+        const syncedOrders = data.syncedOrders || [];
+        if (syncedOrders.length === 0) {
+          setHistLogs(prev => [...prev, `[System] Sync complete: No new orders found in TikTok Shop for this period.`]);
+        } else {
+          const newLogs: string[] = [];
+          syncedOrders.forEach((order: any) => {
+            // Format order date to dd/mm/yyyy
+            const orderDate = new Date(order.create_time * 1000);
+            const dd = String(orderDate.getDate()).padStart(2, '0');
+            const mm = String(orderDate.getMonth() + 1).padStart(2, '0');
+            const yyyy = orderDate.getFullYear();
+            const dateStr = `${dd}/${mm}/${yyyy}`;
+            newLogs.push(`${dateStr} ID:${order.id} Success`);
+          });
+          setHistLogs(prev => [...prev, ...newLogs, `[System] Sync complete! Synced ${syncedOrders.length} orders successfully.`]);
+        }
+        showToast("Historical sync finished successfully!");
+        fetchStatus();
+      } else {
+        throw new Error(data?.error || "Unknown error occurred on server");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setHistLogs(prev => [...prev, `[Error] ${err.message || "Failed to complete historical sync"}`]);
+      showToast("Historical sync failed.");
+    } finally {
+      setIsSyncingHistBlock(false);
+    }
+  };
 
   React.useEffect(() => {
     fetchKeys();
@@ -208,12 +340,18 @@ export default function SettingPage() {
     return `${day}/${month}/${year}`;
   };
 
+  const [printLogs, setPrintLogs] = React.useState<string[]>([]);
   const [countdown, setCountdown] = React.useState(0);
   const countdownIntervalRef = React.useRef<any>(null);
 
   const handleTestPrint = () => {
     if (countdown > 0) return;
     setCountdown(60);
+    setPrintLogs(prev => [
+      ...prev,
+      `[System] Initiating AWB combined print test...`,
+      `[System] Countdown timer activated: 60 seconds (grace period verification).`
+    ]);
 
     countdownIntervalRef.current = setInterval(() => {
       setCountdown(prev => {
@@ -236,10 +374,11 @@ export default function SettingPage() {
   }, []);
 
   const runCombinedPrint = async () => {
+    setPrintLogs(prev => [...prev, "[System] Countdown finished. Fetching unprinted orders from server..."]);
     showToast("Starting combined print job...");
     try {
       const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?_t=${Date.now()}`);
-      if (!res.ok) throw new Error("Failed to fetch orders");
+      if (!res.ok) throw new Error("Failed to fetch orders from server");
       
       const data = await res.json() as any;
       if (!data.success || !data.orders) throw new Error(data.error || "No orders returned");
@@ -259,15 +398,23 @@ export default function SettingPage() {
       });
 
       if (unprintedOrders.length === 0) {
+        setPrintLogs(prev => [...prev, "[System] Sync: No active unpacked/unprinted orders found matching print rules (min age 5 mins)."]);
         showToast("No pending unprinted orders to test.");
         return;
       }
 
+      setPrintLogs(prev => [...prev, `[System] Found ${unprintedOrders.length} candidate orders for printing. Generating AWBs...`]);
       showToast(`Generating AWBs for ${unprintedOrders.length} orders...`);
       const docUrls: string[] = [];
       const printedOrdersInfo: { id: string, shop_id: string }[] = [];
 
       for (const order of unprintedOrders) {
+        const orderDate = new Date(order.create_time * 1000);
+        const dd = String(orderDate.getDate()).padStart(2, '0');
+        const mm = String(orderDate.getMonth() + 1).padStart(2, '0');
+        const yyyy = orderDate.getFullYear();
+        const dateStr = `${dd}/${mm}/${yyyy}`;
+
         try {
           let docUrl = "";
           const hasTracking = order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "";
@@ -307,9 +454,13 @@ export default function SettingPage() {
           if (docUrl) {
             docUrls.push(docUrl);
             printedOrdersInfo.push({ id: order.id, shop_id: order.shop_id });
+            setPrintLogs(prev => [...prev, `${dateStr} ID:${order.id} Success`]);
+          } else {
+            throw new Error("Unable to retrieve PDF URL");
           }
-        } catch (err) {
+        } catch (err: any) {
           console.error(`Failed to create AWB for order ${order.id}:`, err);
+          setPrintLogs(prev => [...prev, `${dateStr} ID:${order.id} Failed (${err.message})`]);
         }
       }
 
@@ -317,6 +468,7 @@ export default function SettingPage() {
         throw new Error("Failed to generate shipping documents for candidate orders.");
       }
 
+      setPrintLogs(prev => [...prev, "[System] PDF documents fetched. Merging AWBs into a combined job..."]);
       showToast("Downloading and merging AWBs...");
       const { PDFDocument } = await import("pdf-lib");
       const mergedPdf = await PDFDocument.create();
@@ -338,6 +490,7 @@ export default function SettingPage() {
         }
       }
 
+      setPrintLogs(prev => [...prev, "[System] Spooling combined PDF to local printer..."]);
       showToast("Spooling merged shipping documents to printer...");
       const mergedPdfBytes = await mergedPdf.save();
       const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
@@ -365,12 +518,14 @@ export default function SettingPage() {
               await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(info.id)}&shop_id=${encodeURIComponent(info.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
             } catch {}
           }
+          setPrintLogs(prev => [...prev, "[System] Merged PDF spooled successfully. Print completed."]);
           showToast("Combined print job spooled successfully.");
           // Trigger page updates
           window.dispatchEvent(new CustomEvent("db-refresh"));
         }, 4000);
       };
     } catch (err: any) {
+      setPrintLogs(prev => [...prev, `[Error] Test print failed: ${err.message}`]);
       showToast(`Test print failed: ${err.message}`);
     }
   };
@@ -403,14 +558,14 @@ export default function SettingPage() {
     JSON.stringify([...syncWorkingDays].sort()) !== JSON.stringify([...initialSyncWorkingDays].sort());
 
   return (
-    <div className="blank-route-page">
+    <div className="blank-route-page" style={{ display: "block", overflowY: "auto", position: "fixed", inset: 0 }}>
       <TopBar title="Setting" />
 
       {/* Main Settings Canvas Container */}
       <div className="settings-container">
         
         {/* Left Column Wrapper */}
-        <div className="flex flex-col gap-5 overflow-y-auto h-full pr-1" style={{ height: "100%", scrollbarWidth: "thin" }}>
+        <div className="flex flex-col gap-5 pr-1" style={{ height: "auto", minWidth: "0" }}>
           
           {/* Connection Credentials Section */}
           <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
@@ -659,29 +814,9 @@ export default function SettingPage() {
 
           {/* Terminal Print Testing Section */}
           <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
-            <h2 className="section-title">Terminal Auto Print Testing</h2>
-            <div className="flex flex-col gap-2.5 mt-4">
-              <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
-                Trigger a manual test print spooler. This will fetch all active unprinted orders from the server, verify the 5-minute grace period, generate their AWBs, merge them, and print them in a combined document.
-              </p>
-              <div style={{ marginTop: "8px", display: "flex", gap: "8px" }}>
-                <button
-                  type="button"
-                  onClick={handleTestPrint}
-                  disabled={countdown > 0}
-                  className={`btn-primary ${countdown > 0 ? "opacity-50 cursor-not-allowed" : ""}`}
-                  style={{
-                    padding: "8px 16px",
-                    fontSize: "12px",
-                    fontWeight: "600",
-                    height: "36px",
-                    borderRadius: "8px",
-                    cursor: countdown > 0 ? "not-allowed" : "pointer"
-                  }}
-                >
-                  {countdown > 0 ? `Pending Print (${countdown}s)` : "Test Print"}
-                </button>
-                
+            <div className="section-header">
+              <h2 className="section-title">Terminal Auto Print Testing</h2>
+              <div className="flex gap-2">
                 {countdown > 0 && (
                   <button
                     type="button"
@@ -692,14 +827,15 @@ export default function SettingPage() {
                       }
                       setCountdown(0);
                       showToast("Test print countdown stopped.");
+                      setPrintLogs(prev => [...prev, "[System] Test print countdown stopped by user."]);
                     }}
                     className="btn-secondary"
                     style={{
-                      padding: "8px 16px",
+                      padding: "0 16px",
                       fontSize: "12px",
                       fontWeight: "600",
                       height: "36px",
-                      borderRadius: "8px",
+                      borderRadius: "100px",
                       borderColor: "#ea868f",
                       color: "#dc3545",
                       cursor: "pointer"
@@ -708,14 +844,85 @@ export default function SettingPage() {
                     Stop Print
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={handleTestPrint}
+                  disabled={countdown > 0}
+                  className="btn-primary"
+                  style={{
+                    padding: "0 16px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    height: "36px",
+                    borderRadius: "100px",
+                    cursor: countdown > 0 ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {countdown > 0 ? `Pending (${countdown}s)` : "Test Print"}
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-2.5">
+              <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
+                Trigger a manual test print spooler. This will fetch all active unprinted orders from the server, verify the 5-minute grace period, generate their AWBs, merge them, and print them in a combined document.
+              </p>
+              
+              {/* Monospace log terminal */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "12px" }}>
+                <span className="form-label" style={{ fontWeight: 600, fontSize: "12px" }}>Print Spooler Logs</span>
+                <div 
+                  className="no-scrollbar"
+                  style={{ 
+                    height: "260px", 
+                    overflowY: "auto", 
+                    backgroundColor: "#0B0F19", 
+                    color: "#4AF626", 
+                    fontFamily: "monospace", 
+                    fontSize: "11px", 
+                    padding: "12px", 
+                    borderRadius: "8px",
+                    border: "1px solid #1E293B",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "4px"
+                  }}
+                >
+                  {printLogs.length === 0 ? (
+                    <span style={{ color: "#64748B", fontStyle: "italic" }}>Print console idle. Click Test Print to run diagnostic print test.</span>
+                  ) : (
+                    printLogs.map((log, idx) => (
+                      <div key={idx} style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{log}</div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
           {/* Terminal IP Configuration Section */}
           <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
-            <h2 className="section-title">Terminal IP Configuration</h2>
-            <div className="flex flex-col gap-2.5 mt-4">
+            <div className="section-header">
+              <h2 className="section-title">Terminal IP Configuration</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const input = document.getElementById("local-ip-settings") as HTMLInputElement;
+                  if (input) {
+                    localStorage.setItem("local_terminal_ip", input.value.trim());
+                    showToast("Local IP override saved successfully. Reloading...");
+                    setTimeout(() => {
+                      window.location.reload();
+                    }, 1500);
+                  }
+                }}
+                className="btn-primary"
+                style={{ height: "36px" }}
+              >
+                Save Local IP
+              </button>
+            </div>
+            <div className="flex flex-col gap-2.5">
               <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
                 Distinguish multiple machines sharing the same local network by setting a local IPv4 address override.
               </p>
@@ -728,31 +935,17 @@ export default function SettingPage() {
                   className="form-input"
                   style={{ maxWidth: "200px", height: "36px", textAlign: "center" }}
                 />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const input = document.getElementById("local-ip-settings") as HTMLInputElement;
-                    if (input) {
-                      localStorage.setItem("local_terminal_ip", input.value.trim());
-                      showToast("Local IP override saved successfully. Reloading...");
-                      setTimeout(() => {
-                        window.location.reload();
-                      }, 1500);
-                    }
-                  }}
-                  className="btn-primary"
-                  style={{ height: "36px" }}
-                >
-                  Save Local IP
-                </button>
               </div>
             </div>
           </div>
 
         </div>
 
+      {/* Right Column Wrapper */}
+      <div className="flex flex-col gap-5" style={{ height: "auto", minWidth: "0" }}>
+
         {/* Integration Authorization & Linked Shops */}
-        <div className="settings-section">
+        <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
           <div className="section-header">
             <h2 className="section-title">TikTok Shop Connections</h2>
             <button 
@@ -911,7 +1104,110 @@ export default function SettingPage() {
           )}
         </div>
 
+        {/* Historical Order Sync Section */}
+        <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
+          <div className="section-header">
+            <h2 className="section-title">Historical Sync Manager</h2>
+            <button
+              type="button"
+              onClick={handleHistoricalSyncBlock}
+              disabled={isSyncingHistBlock || cooldownSeconds > 0}
+              className="btn-primary"
+              style={{
+                height: "36px",
+                padding: "0 24px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "100px",
+                fontWeight: 600,
+                fontSize: "12px",
+                cursor: (isSyncingHistBlock || cooldownSeconds > 0) ? "not-allowed" : "pointer"
+              }}
+            >
+              {isSyncingHistBlock ? "Syncing..." : cooldownSeconds > 0 ? `Cooldown (${cooldownSeconds}s)` : "Sync Range"}
+            </button>
+          </div>
+          
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <p className="helper-note" style={{ margin: "0" }}>
+              Query and sync historical TikTok Shop orders within a specific date range. To protect resource performance, the search is capped to a maximum of 31 days.
+            </p>
+            
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", alignItems: "flex-end" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label className="form-label" style={{ fontWeight: 600, fontSize: "12px" }}>Select Shop</label>
+                <select
+                  value={histShopId}
+                  onChange={(e) => setHistShopId(e.target.value)}
+                  className="form-input"
+                  style={{ width: "200px", height: "36px", padding: "0 10px" }}
+                >
+                  <option value="">-- Choose Shop --</option>
+                  {status?.shops?.filter(s => s.shop_id !== "default").map(shop => (
+                    <option key={shop.shop_id} value={shop.shop_id}>{shop.shop_name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label className="form-label" style={{ fontWeight: 600, fontSize: "12px" }}>Start Date</label>
+                <input
+                  type="date"
+                  value={histStartDate}
+                  onChange={(e) => setHistStartDate(e.target.value)}
+                  className="form-input"
+                  style={{ width: "160px", height: "36px", padding: "0 10px" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label className="form-label" style={{ fontWeight: 600, fontSize: "12px" }}>End Date</label>
+                <input
+                  type="date"
+                  value={histEndDate}
+                  onChange={(e) => setHistEndDate(e.target.value)}
+                  className="form-input"
+                  style={{ width: "160px", height: "36px", padding: "0 10px" }}
+                />
+              </div>
+            </div>
+
+            {/* Terminal logs list block */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <span className="form-label" style={{ fontWeight: 600, fontSize: "12px" }}>Sync Terminal Output Logs</span>
+              <div 
+                className="no-scrollbar"
+                style={{ 
+                  height: "260px", 
+                  overflowY: "auto", 
+                  backgroundColor: "#0B0F19", 
+                  color: "#4AF626", 
+                  fontFamily: "monospace", 
+                  fontSize: "11px", 
+                  padding: "12px", 
+                  borderRadius: "8px",
+                  border: "1px solid #1E293B",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px"
+                }}
+              >
+                {histLogs.length === 0 ? (
+                  <span style={{ color: "#64748B", fontStyle: "italic" }}>Terminal output idle. Select date range and click Sync to monitor progress here.</span>
+                ) : (
+                  histLogs.map((log, idx) => (
+                    <div key={idx} style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{log}</div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
+
+    </div>
 
       {/* Floating Toast Notification */}
       {toastMessage && (

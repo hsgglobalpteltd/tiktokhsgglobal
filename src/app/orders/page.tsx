@@ -202,8 +202,9 @@ export default function OrdersPage() {
         }
       }
 
-      // 2. Perform live sync in the background
-      const resSync = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&_t=${Date.now()}`, {
+      // 2. Perform live sync in the background (Quick Sync for the last 15 days only)
+      const fifteenDaysAgo = Date.now() - 15 * 24 * 3600 * 1000;
+      const resSync = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&sync_start_date=${fifteenDaysAgo}&_t=${Date.now()}`, {
         cache: "no-store"
       });
       if (!resSync.ok) {
