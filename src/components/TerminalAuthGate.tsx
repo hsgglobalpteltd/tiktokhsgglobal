@@ -40,6 +40,44 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   const printingInProgress = React.useRef(false);
   const printTimerRef = React.useRef<any>(null);
 
+  const [nextCheckTime, setNextCheckTime] = React.useState<number | null>(null);
+  const [countdownText, setCountdownText] = React.useState<string>("");
+
+  React.useEffect(() => {
+    if (!nextCheckTime) {
+      setCountdownText("");
+      return;
+    }
+
+    const updateCountdown = () => {
+      const diffMs = nextCheckTime - Date.now();
+      if (diffMs <= 0) {
+        setCountdownText("0S");
+        return;
+      }
+
+      const totalSec = Math.floor(diffMs / 1000);
+      const hours = Math.floor(totalSec / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = totalSec % 60;
+
+      let text = "";
+      if (hours > 0) {
+        text += `${hours}H`;
+      }
+      if (minutes > 0 || hours > 0) {
+        text += `${minutes}M`;
+      }
+      text += `${seconds}S`;
+
+      setCountdownText(text);
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [nextCheckTime]);
+
   // Dragging States
   const [position, setPosition] = React.useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = React.useState(false);
@@ -120,11 +158,13 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     };
   }, [isDragging]);
 
-  const addLog = React.useCallback((type: "info" | "success" | "error", message: string) => {
+  const addLog = React.useCallback((type: "info" | "success" | "error", message: string, noTimestamp = false) => {
     const now = new Date();
+    const dateStr = now.toLocaleDateString("en-GB");
     const timeStr = now.toLocaleTimeString("en-GB", { hour12: false });
+    const fullTimeStr = noTimestamp ? "" : `${dateStr} ${timeStr.substring(0, 5)}`;
     setPrintLogs(prev => [
-      { timestamp: timeStr, type, message },
+      { timestamp: fullTimeStr, type, message },
       ...prev.slice(0, 99) // Keep last 100 logs
     ]);
   }, []);
@@ -334,156 +374,226 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     printingInProgress.current = true;
 
     try {
-      addLog("info", "Checking for new unprinted orders...");
-      const res = await fetch(`${WORKER_URL}/api/tiktok/orders?active_only=true&_t=${Date.now()}`);
-      if (!res.ok) throw new Error(`Fetch failed: ${res.statusText}`);
-      
-      const data = await res.json();
-      if (!data.success || !data.orders) throw new Error(data.error || "No orders returned");
+      // ----------------------------------------------------
+      // PHASE 1: TikTok Auto-Sync (Using Manual Sync Endpoint & Param)
+      // ----------------------------------------------------
+      addLog("info", "Initial Auto Sync");
 
-      const unprintedOrders = data.orders.filter((order: any) => {
-        const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
-        const isNotPrinted = !order.awb_printed;
-        
-        const statusLower = (order.actual_status || "").toLowerCase();
-        const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled", "completed"].includes(statusLower);
-
-        return isUnpacked && isNotPrinted && !cannotPrint;
-      });
-
-      if (unprintedOrders.length === 0) {
-        printingInProgress.current = false;
-        return;
+      // 1. Fetch current cached orders from Supabase (without sync)
+      let prevOrders: any[] = [];
+      try {
+        const cacheRes = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=false&_t=${Date.now()}`);
+        if (cacheRes.ok) {
+          const cacheData = await cacheRes.json();
+          if (cacheData.success) {
+            prevOrders = cacheData.orders || [];
+          }
+        }
+      } catch (err) {
+        console.error("Cache fetch failed:", err);
       }
 
-      addLog("info", `Found ${unprintedOrders.length} pending unprinted orders.`);
+      // 2. Perform live sync from TikTok (for the last 15 days, exact same call as manual refresh)
+      const fifteenDaysAgo = Date.now() - 15 * 24 * 3600 * 1000;
+      const resSync = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=true&sync_start_date=${fifteenDaysAgo}&_t=${Date.now()}`, {
+        cache: "no-store"
+      });
+      if (!resSync.ok) {
+        throw new Error(`Sync fetch failed: ${resSync.statusText}`);
+      }
+      const dataSync = await resSync.json();
+      if (!dataSync.success) {
+        throw new Error(dataSync.error || "Failed to sync orders from TikTok");
+      }
 
-      // Phase 1: Create AWBs for orders that don't have tracking IDs
+      let currentOrdersList = dataSync.orders || [];
+
+      // 3. Compute and log changes
+      const prevMap = new Map(prevOrders.map((o: any) => [o.id, o]));
+      let hasChanges = false;
+      for (const newOrd of currentOrdersList) {
+        const prevOrd = prevMap.get(newOrd.id);
+        if (!prevOrd) {
+          addLog("success", `ID : ${newOrd.id} New Order`, true);
+          hasChanges = true;
+        } else {
+          const prevStatus = prevOrd.actual_status || "";
+          const newStatus = newOrd.actual_status || "";
+          const prevSysStatus = prevOrd.system_status || "";
+          const newSysStatus = newOrd.system_status || "";
+          if (prevStatus !== newStatus || prevSysStatus !== newSysStatus) {
+            addLog("success", `ID : ${newOrd.id} Status Update`, true);
+            hasChanges = true;
+          }
+        }
+      }
+
+      if (!hasChanges) {
+        addLog("info", "no new data", true);
+      }
+
+      addLog("success", "Auto Sync Complete Success");
+
+      // ----------------------------------------------------
+      // PHASE 2: Auto-Generate AWB
+      // ----------------------------------------------------
+      addLog("info", "Initial Auto Generate AWB");
+
+      // Filter for orders that are "Unpacked" and not printed, and actual status is printable
+      const getUnprintedOrdersList = (orders: any[]) => {
+        return orders.filter((order: any) => {
+          const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
+          const isNotPrinted = !order.awb_printed;
+          
+          const statusLower = (order.actual_status || "").toLowerCase();
+          const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled", "completed"].includes(statusLower);
+
+          return isUnpacked && isNotPrinted && !cannotPrint;
+        });
+      };
+
+      let unprintedOrders = getUnprintedOrdersList(currentOrdersList);
       const ordersMissingAwb = unprintedOrders.filter((order: any) => !order.tracking_number || order.tracking_number === "N/A");
+
       if (ordersMissingAwb.length > 0) {
-        addLog("info", `Detected ${ordersMissingAwb.length} orders missing AWB tracking numbers. Arranging shipments first...`);
         let generatedAny = false;
+
         for (const order of ordersMissingAwb) {
           try {
-            addLog("info", `Generating AWB for order ${order.id}...`);
             const awbRes = await fetch(`${WORKER_URL}/api/tiktok/orders/create-awb`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ order_id: order.id, shop_id: order.shop_id, action_by: terminalName })
             });
-            if (!awbRes.ok) {
-              throw new Error(`Failed to create AWB: ${awbRes.statusText}`);
+            if (awbRes.ok) {
+              const awbData = await awbRes.json();
+              if (awbData.success) {
+                addLog("success", `ID : ${order.id} AWB Generated`, true);
+                generatedAny = true;
+              } else {
+                addLog("error", `ID : ${order.id} AWB Generation Failed: ${awbData.error || "Unknown error"}`, true);
+              }
+            } else {
+              addLog("error", `ID : ${order.id} AWB Generation Failed: HTTP ${awbRes.statusText}`, true);
             }
-            const awbData = await awbRes.json();
-            if (!awbData.success) {
-              throw new Error(awbData.error || "Failed to create AWB on TikTok");
-            }
-            addLog("success", `AWB created successfully for order ${order.id}.`);
-            generatedAny = true;
           } catch (err: any) {
-            addLog("error", `ERROR: Failed to arrange shipment for order ${order.id} - ${err.message || err}`);
+            addLog("error", `ID : ${order.id} AWB Generation Failed: ${err.message || err}`, true);
           }
         }
-        
-        // Dispatch global refresh event to refresh screen tables
-        window.dispatchEvent(new CustomEvent("db-refresh"));
 
+        // Perform a quick sync to pull the newly registered tracking numbers
         if (generatedAny) {
-          addLog("info", "AWBs generated. Printing skipped for this run to allow tracking IDs to update. Will print next run.");
-          printingInProgress.current = false;
-          return; // Skip printing for this cycle to allow generated tracking IDs to sync
-        }
-      }
-
-      // Phase 2: Retrieve PDFs, Merge and Print
-      const ordersToPrint = [];
-      const pdfUrls = [];
-      for (const order of unprintedOrders) {
-        try {
-          addLog("info", `Retrieving AWB document URL for order ${order.id}...`);
-          const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
-          if (!printRes.ok) {
-            throw new Error(`Failed to retrieve document: ${printRes.statusText}`);
-          }
-          const printData = await printRes.json();
-          if (!printData.success || !printData.doc_url) {
-            throw new Error(printData.error || "No document URL returned from server");
-          }
-          ordersToPrint.push({ id: order.id, shop_id: order.shop_id });
-          pdfUrls.push(printData.doc_url);
-        } catch (orderErr: any) {
-          const errStr = String(orderErr.message || orderErr);
-          addLog("error", `ERROR: Failed to retrieve PDF for order ${order.id} - ${errStr}`);
-          
-          // If the order has already been picked up (TikTok API error), mark as printed in DB to prevent infinite retry
-          if (errStr.toLowerCase().includes("pickup") || errStr.toLowerCase().includes("picked up")) {
-            addLog("info", `Order ${order.id} has already been picked up. Marking as printed to remove from queue.`);
-            try {
-              await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-            } catch (logErr) {
-              console.error(`Failed to mark picked-up order ${order.id} as printed:`, logErr);
+          try {
+            const quickSyncRes = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=true&sync_start_date=${fifteenDaysAgo}&_t=${Date.now()}`, {
+              cache: "no-store"
+            });
+            if (quickSyncRes.ok) {
+              const quickSyncData = await quickSyncRes.json();
+              if (quickSyncData.success) {
+                currentOrdersList = quickSyncData.orders || [];
+                unprintedOrders = getUnprintedOrdersList(currentOrdersList);
+              }
             }
-          } else {
-            processedOrderIds.current.delete(order.id); // Allow retry next loop
+          } catch (syncErr) {
+            console.error("Quick sync failed after AWB generation:", syncErr);
           }
         }
+      } else {
+        addLog("info", "no new order to generate", true);
       }
 
-      if (ordersToPrint.length === 0) {
-        printingInProgress.current = false;
-        return;
-      }
+      addLog("success", "Auto Generate AWB Complete Success");
 
-      addLog("info", `Downloading and merging ${pdfUrls.length} AWB PDFs...`);
-      let mergedBlobUrl = "";
-      try {
-        const mergedPdf = await PDFDocument.create();
-        for (const url of pdfUrls) {
-          const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(url)}`;
-          const pdfRes = await fetch(proxyUrl);
-          if (!pdfRes.ok) throw new Error(`HTTP ${pdfRes.status} trying to download PDF`);
-          const pdfBytes = await pdfRes.arrayBuffer();
-          const pdf = await PDFDocument.load(pdfBytes);
-          const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-          copiedPages.forEach((page) => {
-            const { width, height } = page.getSize();
-            // A6 size in PDF points:
-            // 100mm = 100 * (72 / 25.4) = 283.46 points
-            // 150mm = 150 * (72 / 25.4) = 425.20 points
-            const targetWidth = 283.46;
-            const targetHeight = 425.20;
+      // ----------------------------------------------------
+      // PHASE 3: AWB Download & Print
+      // ----------------------------------------------------
+      addLog("info", "Initial Auto Print AWB");
 
-            const scaleX = targetWidth / width;
-            const scaleY = targetHeight / height;
-            const scale = Math.min(scaleX, scaleY);
+      // Only print orders that now have tracking numbers
+      const ordersToPrint = unprintedOrders.filter((order: any) => order.tracking_number && order.tracking_number !== "N/A");
 
-            page.scaleContent(scale, scale);
+      if (ordersToPrint.length > 0) {
+        const printedOrderIds: any[] = [];
+        const pdfUrls = [];
 
-            const dx = (targetWidth - width * scale) / 2;
-            const dy = (targetHeight - height * scale) / 2;
-            page.translateContent(dx, dy);
+        for (const order of ordersToPrint) {
+          try {
+            const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
+            if (printRes.ok) {
+              const printData = await printRes.json();
+              if (printData.success && printData.doc_url) {
+                pdfUrls.push(printData.doc_url);
+                printedOrderIds.push(order);
+                addLog("success", `ID : ${order.id} AWB Printed`, true);
+              } else {
+                addLog("error", `ID : ${order.id} Print Document Retrieval Failed: ${printData.error || "No URL returned"}`, true);
+              }
+            } else {
+              addLog("error", `ID : ${order.id} Print Document Retrieval Failed: HTTP ${printRes.statusText}`, true);
+            }
+          } catch (orderErr: any) {
+            const errStr = String(orderErr.message || orderErr);
+            addLog("error", `ID : ${order.id} Print Document Retrieval Failed: ${errStr}`, true);
 
-            page.setSize(targetWidth, targetHeight);
-            mergedPdf.addPage(page);
-          });
+            // If the order has already been picked up (TikTok API error), mark as printed in DB to remove from queue
+            if (errStr.toLowerCase().includes("pickup") || errStr.toLowerCase().includes("picked up")) {
+              try {
+                await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+              } catch (logErr) {
+                console.error(`Failed to mark picked-up order ${order.id} as printed:`, logErr);
+              }
+            }
+          }
         }
-        const mergedPdfBytes = await mergedPdf.save();
-        const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
-        mergedBlobUrl = URL.createObjectURL(blob);
-      } catch (mergeErr: any) {
-        throw new Error(`Failed to download and merge PDFs: ${mergeErr.message || mergeErr}`);
+
+        if (pdfUrls.length > 0) {
+          // Download and merge PDFs
+          const mergedPdf = await PDFDocument.create();
+          for (const url of pdfUrls) {
+            const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(url)}`;
+            const pdfRes = await fetch(proxyUrl);
+            if (!pdfRes.ok) throw new Error(`HTTP ${pdfRes.status} trying to download PDF`);
+            const pdfBytes = await pdfRes.arrayBuffer();
+            const pdf = await PDFDocument.load(pdfBytes);
+            const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+            copiedPages.forEach((page) => {
+              const { width, height } = page.getSize();
+              const targetWidth = 283.46; // A6 width in points
+              const targetHeight = 425.20; // A6 height in points
+
+              const scaleX = targetWidth / width;
+              const scaleY = targetHeight / height;
+              const scale = Math.min(scaleX, scaleY);
+
+              page.scaleContent(scale, scale);
+
+              const dx = (targetWidth - width * scale) / 2;
+              const dy = (targetHeight - height * scale) / 2;
+              page.translateContent(dx, dy);
+
+              page.setSize(targetWidth, targetHeight);
+              mergedPdf.addPage(page);
+            });
+          }
+
+          const mergedPdfBytes = await mergedPdf.save();
+          const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
+          const mergedBlobUrl = URL.createObjectURL(blob);
+
+          await printMergedPdfs(mergedBlobUrl, printedOrderIds.map(o => ({ id: o.id, shop_id: o.shop_id })));
+          URL.revokeObjectURL(mergedBlobUrl);
+        }
+      } else {
+        addLog("info", "no new order to print", true);
       }
 
-      addLog("info", `AWBs merged successfully. Spooling print job...`);
-      await printMergedPdfs(mergedBlobUrl, ordersToPrint);
-      URL.revokeObjectURL(mergedBlobUrl);
-      addLog("success", `SUCCESS: Spooled merged print job for ${ordersToPrint.length} orders.`);
+      addLog("success", "Auto Print AWB Complete Success");
 
       // Dispatch global refresh event to refresh screen tables
       window.dispatchEvent(new CustomEvent("db-refresh"));
 
     } catch (err: any) {
-      addLog("error", `Print loop worker failed: ${err.message || err}`);
+      addLog("error", `Auto Sync/Print pipeline failed: ${err.message || err}`);
     } finally {
       printingInProgress.current = false;
     }
@@ -524,18 +634,17 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           }
           
           const delay = 5 * 60 * 1000;
-          const targetTime = new Date(Date.now() + delay);
           if (printTimerRef.current) clearTimeout(printTimerRef.current);
           
           if (!isInWindow) {
-            addLog("info", `Outside working sync window. Next retry check in 5 minutes.`);
+            setNextCheckTime(Date.now() + delay);
             printTimerRef.current = setTimeout(async () => {
               scheduleNextPrint();
             }, delay);
             return;
           }
           
-          addLog("info", `Next scheduled print check at: ${targetTime.toLocaleString()} (in 5 mins)`);
+          setNextCheckTime(Date.now() + delay);
           printTimerRef.current = setTimeout(async () => {
             await printWorker();
             scheduleNextPrint();
@@ -574,8 +683,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           
           if (!isInWindow) {
             const delay = 30 * 60 * 1000;
-            const targetWait = new Date(Date.now() + delay);
-            addLog("info", `Outside working sync window. Next retry check at: ${targetWait.toLocaleString()} (in 30 mins)`);
+            setNextCheckTime(Date.now() + delay);
             if (printTimerRef.current) clearTimeout(printTimerRef.current);
             printTimerRef.current = setTimeout(async () => {
               scheduleNextPrint();
@@ -584,8 +692,8 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           }
           
           const delay = targetTime.getTime() - Date.now();
+          setNextCheckTime(Date.now() + delay);
           if (printTimerRef.current) clearTimeout(printTimerRef.current);
-          addLog("info", `Next scheduled print check at: ${targetTime.toLocaleString()} (in ${Math.round(delay / 60000)} mins)`);
           printTimerRef.current = setTimeout(async () => {
             await printWorker();
             scheduleNextPrint();
@@ -637,7 +745,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
                 if (targetLocalTime.getTime() > Date.now() + 1000) {
                   const delay = targetLocalTime.getTime() - Date.now();
-                  addLog("info", `Next scheduled print check at: ${targetLocalTime.toLocaleString()} (in ${Math.round(delay / 60000)} mins)`);
+                  setNextCheckTime(Date.now() + delay);
 
                   if (printTimerRef.current) clearTimeout(printTimerRef.current);
                   printTimerRef.current = setTimeout(async () => {
@@ -656,15 +764,17 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         }
 
         if (!found) {
-          addLog("info", "Could not calculate next scheduled sync time. Retrying in 15 minutes.");
+          const delay = 15 * 60 * 1000;
+          setNextCheckTime(Date.now() + delay);
           if (printTimerRef.current) clearTimeout(printTimerRef.current);
           printTimerRef.current = setTimeout(async () => {
             await printWorker();
             scheduleNextPrint();
-          }, 15 * 60 * 1000);
+          }, delay);
         }
       } catch (err: any) {
         addLog("error", `Failed to schedule next print check: ${err.message}. Retrying in 5 minutes.`);
+        setNextCheckTime(Date.now() + 5 * 60 * 1000);
         if (printTimerRef.current) clearTimeout(printTimerRef.current);
         printTimerRef.current = setTimeout(scheduleNextPrint, 5 * 60 * 1000);
       }
@@ -677,6 +787,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     // Event listener for manual synchronizations
     const handleManualSync = async () => {
       addLog("info", "Manual sync detected. Starting print check immediately...");
+      setNextCheckTime(null);
       if (printTimerRef.current) clearTimeout(printTimerRef.current);
       await printWorker(true);
       scheduleNextPrint();
@@ -689,64 +800,6 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     };
   }, [status, autoPrintEnabled, terminalName, addLog, printPdf, printMergedPdfs, autoPrintPaused, printWorker]);
 
-  // System Events Listener for System Log Console
-  React.useEffect(() => {
-    if (status !== "authenticated") return;
-
-    const handleSyncStart = (e: any) => {
-      const isManual = e.detail?.manual;
-      if (isManual) {
-        addLog("info", "[SYNC] Manual synchronization started...");
-      }
-    };
-
-    const handleSyncEnd = (e: any) => {
-      const { success, count, error, manual, details } = e.detail || {};
-      if (manual) {
-        if (success) {
-          addLog("success", `[SYNC] Manual synchronization complete.`);
-          if (details && details.length > 0) {
-            details.forEach((line: string) => addLog("success", `  ${line}`));
-          } else {
-            addLog("success", `  • No changes detected.`);
-          }
-        } else {
-          addLog("error", `[SYNC] ERROR: Manual synchronization failed - ${error || "Unknown error"}`);
-        }
-      }
-    };
-
-    const handleBgUpdate = (e: any) => {
-      const { count, details } = e.detail || {};
-      addLog("success", `[SYNC] Background sync check: Detected database changes:`);
-      if (details && details.length > 0) {
-        details.forEach((line: string) => addLog("success", `  ${line}`));
-      }
-    };
-
-    const handleAction = (e: any) => {
-      const { action, orderId, error } = e.detail || {};
-      if (action === "Create AWB") {
-        addLog("info", `[SYSTEM] Manually generating AWB for order ${orderId}...`);
-      } else if (action === "Create AWB Success") {
-        addLog("success", `[SYSTEM] AWB successfully generated for order ${orderId}.`);
-      } else if (action === "Create AWB Failure") {
-        addLog("error", `[SYSTEM] ERROR: Failed to generate AWB for order ${orderId} - ${error}`);
-      }
-    };
-
-    window.addEventListener("tiktok-sync-start", handleSyncStart);
-    window.addEventListener("tiktok-sync-end", handleSyncEnd);
-    window.addEventListener("tiktok-bg-update", handleBgUpdate);
-    window.addEventListener("tiktok-action", handleAction);
-
-    return () => {
-      window.removeEventListener("tiktok-sync-start", handleSyncStart);
-      window.removeEventListener("tiktok-sync-end", handleSyncEnd);
-      window.removeEventListener("tiktok-bg-update", handleBgUpdate);
-      window.removeEventListener("tiktok-action", handleAction);
-    };
-  }, [status, addLog]);
 
   const handleKeypadPress = (val: string) => {
     if (enteredPin.length >= 4) return;
@@ -964,7 +1017,9 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
                     
                     return (
                       <div key={idx} className="flex gap-1.5 leading-relaxed break-words">
-                        <span className="text-zinc-600 font-semibold">[{log.timestamp}]</span>
+                        {log.timestamp && (
+                          <span className="text-zinc-600 font-semibold">{log.timestamp}</span>
+                        )}
                         <span className={typeColor}>{log.message}</span>
                       </div>
                     );
@@ -973,7 +1028,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
               </div>
  
               <footer className="px-3 py-1.5 bg-zinc-800/80 border-t border-zinc-700 flex justify-between items-center text-[9px] text-zinc-500 font-semibold">
-                <span>Polling synced database: 30s</span>
+                <span>{countdownText ? `Next Sync: ${countdownText}` : "Polling synced database: 30s"}</span>
                 <div className="flex gap-3">
                   {autoPrintEnabled && (
                     <button 

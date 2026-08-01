@@ -193,17 +193,19 @@ export default function OrdersPage() {
       if (data.success) {
         setShops(data.shops || []);
         if (silent) {
-          setOrders(prev => {
-            const updatedOrders = data.orders || [];
-            
-            // Compute sync changes
-            const stats = computeOrderSyncStats(prev, updatedOrders);
-            if (stats.newCount > 0 || stats.details.length > 0) {
+          const updatedOrders = data.orders || [];
+          
+          // Compute sync changes outside state updater to avoid rendering side-effects
+          const stats = computeOrderSyncStats(orders, updatedOrders);
+          if (stats.newCount > 0 || stats.details.length > 0) {
+            setTimeout(() => {
               window.dispatchEvent(new CustomEvent("tiktok-bg-update", {
                 detail: { count: stats.newCount, details: stats.details }
               }));
-            }
+            }, 0);
+          }
 
+          setOrders(prev => {
             const prevMap = new Map(prev.map(o => [o.id, o]));
             updatedOrders.forEach((o: any) => {
               prevMap.set(o.id, o);
