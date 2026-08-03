@@ -422,10 +422,32 @@ export default function OrdersPage() {
 
         const singlePdfBytes = await singlePdf.save();
         const blob = new Blob([singlePdfBytes as any], { type: "application/pdf" });
-        const blobUrl = URL.createObjectURL(blob);
 
-        window.open(blobUrl, "_blank");
-        showToast("Opening A6 AWB in a new tab...");
+        const blobToBase64 = (b: Blob): Promise<string> => {
+          return new Promise((resVal, rejVal) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64data = reader.result as string;
+              resVal(base64data.split(',')[1]);
+            };
+            reader.onerror = rejVal;
+            reader.readAsDataURL(b);
+          });
+        };
+        const base64 = await blobToBase64(blob);
+
+        const printRes = await fetch("/api/print", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdfBase64: base64 })
+        });
+
+        if (!printRes.ok) {
+          const printErrData = await printRes.json();
+          throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
+        }
+
+        showToast("AWB printed silently successfully");
         // Update local state so AWB printed flag updates instantly
         setOrders(prev => prev.map(o => o.id === orderId ? { ...o, awb_printed: true } : o));
       } else {
@@ -530,10 +552,32 @@ export default function OrdersPage() {
       setBulkPrintProgress("Finalizing...");
       const mergedPdfBytes = await mergedPdf.save();
       const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
-      const blobUrl = URL.createObjectURL(blob);
       
-      window.open(blobUrl, "_blank");
-      showToast("AWBs combined and opened in a new tab!");
+      const blobToBase64 = (b: Blob): Promise<string> => {
+        return new Promise((resVal, rejVal) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64data = reader.result as string;
+            resVal(base64data.split(',')[1]);
+          };
+          reader.onerror = rejVal;
+          reader.readAsDataURL(b);
+        });
+      };
+      const base64 = await blobToBase64(blob);
+
+      const printRes = await fetch("/api/print", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdfBase64: base64 })
+      });
+
+      if (!printRes.ok) {
+        const printErrData = await printRes.json();
+        throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
+      }
+
+      showToast("AWBs combined and printed silently successfully!");
 
       // Update local state so AWB printed flag updates instantly for successfully printed orders
       const printedSet = new Set(idsToPrint.filter(id => !failedOrders.includes(id)));

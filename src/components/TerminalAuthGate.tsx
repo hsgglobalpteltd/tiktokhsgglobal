@@ -234,68 +234,48 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   // Helper function to print a PDF url in a hidden iframe (Chrome kiosk-printing friendly)
   const printPdf = React.useCallback((pdfUrl: string, orderId: string, shopId: string) => {
     return new Promise<void>(async (resolve, reject) => {
-      let iframe: HTMLIFrameElement | null = null;
-      let blobUrl = "";
       try {
         // Fetch PDF bytes via backend proxy to avoid CORS blocks
         const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(pdfUrl)}`;
         const res = await fetch(proxyUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status} trying to download PDF`);
         const blob = await res.blob();
-        blobUrl = URL.createObjectURL(blob);
 
-        iframe = document.createElement("iframe");
-        iframe.style.position = "fixed";
-        iframe.style.width = "0";
-        iframe.style.height = "0";
-        iframe.style.border = "none";
-        iframe.src = blobUrl;
-        document.body.appendChild(iframe);
-
-        let timeout = setTimeout(() => {
-          if (iframe && iframe.parentNode) {
-            document.body.removeChild(iframe);
-          }
-          if (blobUrl) URL.revokeObjectURL(blobUrl);
-          reject(new Error("Print spool timed out"));
-        }, 20000);
-
-        iframe.onload = () => {
-          try {
-            iframe?.contentWindow?.focus();
-            iframe?.contentWindow?.print();
-          } catch (printErr) {
-            console.error("Failed to invoke print dialog on iframe", printErr);
-          }
-
-          // Wait 4 seconds to allow print spooling buffer
-          setTimeout(async () => {
-            clearTimeout(timeout);
-            try {
-              // Log print status to backend
-              const logRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(orderId)}&shop_id=${encodeURIComponent(shopId)}&action_by=${encodeURIComponent(terminalName)}`);
-              if (!logRes.ok) {
-                console.warn("Failed to log print-awb in backend status tracker");
-              }
-              if (iframe && iframe.parentNode) {
-                document.body.removeChild(iframe);
-              }
-              if (blobUrl) URL.revokeObjectURL(blobUrl);
-              resolve();
-            } catch (logErr) {
-              if (iframe && iframe.parentNode) {
-                document.body.removeChild(iframe);
-              }
-              if (blobUrl) URL.revokeObjectURL(blobUrl);
-              resolve(); // Resolve anyway since print was triggered
-            }
-          }, 4000);
+        const blobToBase64 = (b: Blob): Promise<string> => {
+          return new Promise((resVal, rejVal) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64data = reader.result as string;
+              resVal(base64data.split(',')[1]);
+            };
+            reader.onerror = rejVal;
+            reader.readAsDataURL(b);
+          });
         };
-      } catch (err) {
-        if (iframe && iframe.parentNode) {
-          document.body.removeChild(iframe);
+        const base64 = await blobToBase64(blob);
+
+        const printRes = await fetch("/api/print", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdfBase64: base64 })
+        });
+
+        if (!printRes.ok) {
+          const printErrData = await printRes.json();
+          throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
         }
-        if (blobUrl) URL.revokeObjectURL(blobUrl);
+
+        try {
+          // Log print status to backend
+          const logRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(orderId)}&shop_id=${encodeURIComponent(shopId)}&action_by=${encodeURIComponent(terminalName)}`);
+          if (!logRes.ok) {
+            console.warn("Failed to log print-awb in backend status tracker");
+          }
+        } catch (logErr) {
+          console.error("Failed to log print-awb:", logErr);
+        }
+        resolve();
+      } catch (err) {
         reject(err);
       }
     });
@@ -303,63 +283,49 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
   // Helper function to print a merged PDF Blob URL in a hidden iframe
   const printMergedPdfs = React.useCallback((blobUrl: string, orders: { id: string; shop_id: string }[]) => {
-    return new Promise<void>((resolve, reject) => {
-      let iframe: HTMLIFrameElement | null = null;
+    return new Promise<void>(async (resolve, reject) => {
       try {
-        iframe = document.createElement("iframe");
-        iframe.style.position = "fixed";
-        iframe.style.width = "0";
-        iframe.style.height = "0";
-        iframe.style.border = "none";
-        iframe.src = blobUrl;
-        document.body.appendChild(iframe);
+        const resBlob = await fetch(blobUrl);
+        if (!resBlob.ok) throw new Error("Failed to fetch merged blob from URL");
+        const blob = await resBlob.blob();
 
-        let timeout = setTimeout(() => {
-          if (iframe && iframe.parentNode) {
-            document.body.removeChild(iframe);
-          }
-          reject(new Error("Print spool timed out"));
-        }, 30000);
-
-        iframe.onload = () => {
-          try {
-            iframe?.contentWindow?.focus();
-            iframe?.contentWindow?.print();
-          } catch (printErr) {
-            console.error("Failed to invoke print dialog on iframe", printErr);
-          }
-
-          // Wait 5 seconds to allow print spooling buffer
-          setTimeout(async () => {
-            clearTimeout(timeout);
-            try {
-              // Log print status to backend for all orders in batch
-              for (const order of orders) {
-                try {
-                  const logRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-                  if (!logRes.ok) {
-                    console.warn(`Failed to log print-awb in backend for order ${order.id}`);
-                  }
-                } catch (logErr) {
-                  console.error(`Error logging print-awb for order ${order.id}:`, logErr);
-                }
-              }
-              if (iframe && iframe.parentNode) {
-                document.body.removeChild(iframe);
-              }
-              resolve();
-            } catch (err) {
-              if (iframe && iframe.parentNode) {
-                document.body.removeChild(iframe);
-              }
-              resolve(); // Resolve anyway since print was triggered
-            }
-          }, 5000);
+        const blobToBase64 = (b: Blob): Promise<string> => {
+          return new Promise((resVal, rejVal) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64data = reader.result as string;
+              resVal(base64data.split(',')[1]);
+            };
+            reader.onerror = rejVal;
+            reader.readAsDataURL(b);
+          });
         };
-      } catch (err) {
-        if (iframe && iframe.parentNode) {
-          document.body.removeChild(iframe);
+        const base64 = await blobToBase64(blob);
+
+        const printRes = await fetch("/api/print", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdfBase64: base64 })
+        });
+
+        if (!printRes.ok) {
+          const printErrData = await printRes.json();
+          throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
         }
+
+        // Log print status to backend for all orders in batch
+        for (const order of orders) {
+          try {
+            const logRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+            if (!logRes.ok) {
+              console.warn(`Failed to log print-awb in backend for order ${order.id}`);
+            }
+          } catch (logErr) {
+            console.error(`Error logging print-awb for order ${order.id}:`, logErr);
+          }
+        }
+        resolve();
+      } catch (err) {
         reject(err);
       }
     });

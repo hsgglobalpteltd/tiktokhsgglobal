@@ -523,34 +523,41 @@ export default function SettingPage() {
       const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
       const blobUrl = URL.createObjectURL(blob);
 
-      // Print in hidden iframe
-      const iframe = document.createElement("iframe");
-      iframe.style.position = "fixed";
-      iframe.style.width = "0";
-      iframe.style.height = "0";
-      iframe.style.border = "none";
-      iframe.src = blobUrl;
-      document.body.appendChild(iframe);
-
-      iframe.onload = () => {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-        setTimeout(async () => {
-          document.body.removeChild(iframe);
-          URL.revokeObjectURL(blobUrl);
-          
-          // Log printed status in backend for all
-          for (const info of printedOrdersInfo) {
-            try {
-              await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(info.id)}&shop_id=${encodeURIComponent(info.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-            } catch {}
-          }
-          setPrintLogs(prev => [...prev, "[System] Merged PDF spooled successfully. Print completed."]);
-          showToast("Combined print job spooled successfully.");
-          // Trigger page updates
-          window.dispatchEvent(new CustomEvent("db-refresh"));
-        }, 4000);
+      // Convert to base64
+      const blobToBase64 = (b: Blob): Promise<string> => {
+        return new Promise((resVal, rejVal) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64data = reader.result as string;
+            resVal(base64data.split(',')[1]);
+          };
+          reader.onerror = rejVal;
+          reader.readAsDataURL(b);
+        });
       };
+      const base64 = await blobToBase64(blob);
+
+      const printRes = await fetch("/api/print", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdfBase64: base64 })
+      });
+
+      if (!printRes.ok) {
+        const printErrData = await printRes.json();
+        throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
+      }
+
+      // Log printed status in backend for all
+      for (const info of printedOrdersInfo) {
+        try {
+          await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(info.id)}&shop_id=${encodeURIComponent(info.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+        } catch {}
+      }
+      setPrintLogs(prev => [...prev, "[System] Merged PDF spooled successfully. Print completed."]);
+      showToast("Combined print job spooled successfully.");
+      // Trigger page updates
+      window.dispatchEvent(new CustomEvent("db-refresh"));
     } catch (err: any) {
       setPrintLogs(prev => [...prev, `[Error] Test print failed: ${err.message}`]);
       showToast(`Test print failed: ${err.message}`);
