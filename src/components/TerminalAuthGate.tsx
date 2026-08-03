@@ -924,7 +924,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}      {/* Floating Kiosk Console Drawer */}
-      {status === "authenticated" && (
+      {status === "authenticated" && autoPrintEnabled && (
         <div 
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
