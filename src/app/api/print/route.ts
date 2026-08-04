@@ -4,114 +4,6 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-// Helper to check if running inside Windows environment (native, git bash, cygwin, msys2)
-function isWindows() {
-  if (process.platform === "win32") return true;
-  if (process.env.OS && /windows/i.test(process.env.OS)) return true;
-  if (process.env.WINDIR || process.env.SystemRoot) return true;
-  if (fs.existsSync("/c/Windows") || fs.existsSync("/mnt/c/Windows") || fs.existsSync("C:/Windows") || fs.existsSync("C:\\Windows")) return true;
-  return false;
-}
-
-// Translate Windows path to POSIX path format for emulated shells on Windows (Cygwin, MSYS2, Git Bash)
-function translateWindowsToPosixPath(winPath: string): string {
-  const cleanPath = winPath.replace(/\\/g, "/");
-  if (/^[a-zA-Z]:\//.test(cleanPath)) {
-    const drive = cleanPath[0].toLowerCase();
-    const rest = cleanPath.substring(3);
-    
-    // Check if it's Cygwin
-    if (fs.existsSync("/cygdrive")) {
-      return `/cygdrive/${drive}/${rest}`;
-    }
-    // Git Bash / MSYS2 / standard MINGW
-    return `/${drive}/${rest}`;
-  }
-  return winPath;
-}
-
-// Translate POSIX path format back to Windows path format for SumatraPDF (e.g. /c/path -> C:\path)
-function posixToWindowsPath(posixPath: string): string {
-  if (posixPath.startsWith("/cygdrive/")) {
-    const drive = posixPath[10].toUpperCase();
-    const rest = posixPath.substring(12).replace(/\//g, "\\");
-    return `${drive}:\\${rest}`;
-  }
-  if (/^\/[a-zA-Z]\//.test(posixPath)) {
-    const drive = posixPath[1].toUpperCase();
-    const rest = posixPath.substring(3).replace(/\//g, "\\");
-    return `${drive}:\\${rest}`;
-  }
-  return posixPath;
-}
-
-// Helper to check if running inside WSL (Windows Subsystem for Linux)
-function getWSLDetails() {
-  if (process.platform !== "linux") return { isWSL: false };
-  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return { isWSL: true };
-  if (fs.existsSync("/run/WSL")) return { isWSL: true };
-  try {
-    if (fs.existsSync("/proc/version")) {
-      const version = fs.readFileSync("/proc/version", "utf8").toLowerCase();
-      if (version.includes("microsoft") || version.includes("wsl")) {
-        return { isWSL: true };
-      }
-    }
-  } catch (e) {
-    console.error("Error reading /proc/version:", e);
-  }
-  return { isWSL: false };
-}
-
-// Find Windows User Home directory in WSL
-function findWindowsUserPath() {
-  const defaultUser = "PC-User";
-  const defaultPath = `/mnt/c/Users/${defaultUser}`;
-  if (fs.existsSync(defaultPath)) {
-    return defaultPath;
-  }
-
-  try {
-    const usersDir = "/mnt/c/Users";
-    if (fs.existsSync(usersDir)) {
-      const files = fs.readdirSync(usersDir);
-      for (const file of files) {
-        if (["default", "public", "all users", "defaultuser0", "desktop.ini"].includes(file.toLowerCase())) {
-          continue;
-        }
-        const userPath = path.join(usersDir, file);
-        if (fs.statSync(userPath).isDirectory()) {
-          return userPath;
-        }
-      }
-    }
-  } catch (err) {
-    console.error("Failed to scan Windows Users directory:", err);
-  }
-
-  return defaultPath;
-}
-
-// Translate WSL path to Windows path format (e.g. /mnt/c/path -> C:\path)
-function wslToWindowsPath(wslPath: string): string {
-  if (wslPath.startsWith("/mnt/c/")) {
-    const withoutMnt = wslPath.substring(7); // "Users/PC-User/..."
-    return "C:\\" + withoutMnt.replace(/\//g, "\\");
-  }
-  return wslPath;
-}
-
-// Translate Windows path to WSL path format (e.g. C:\path -> /mnt/c/path)
-function windowsToWslPath(winPath: string): string {
-  const cleanPath = winPath.replace(/\\/g, "/");
-  if (/^[a-zA-Z]:\//.test(cleanPath)) {
-    const drive = cleanPath[0].toLowerCase();
-    const rest = cleanPath.substring(3);
-    return `/mnt/${drive}/${rest}`;
-  }
-  return winPath;
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -145,20 +37,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { isWSL } = getWSLDetails();
-
     let tempFilePath = "";
     let winTempFilePath = "";
     let shouldDeletePrintFile = false; // Always keep the printed logs now!
 
-    // Normalize path slashes to forward slashes for cross-platform compatibility (works on both Windows & Unix runtimes)
-    let localDownloadPath = downloadPath.replace(/\\/g, "/");
-    if (isWSL) {
-      localDownloadPath = windowsToWslPath(localDownloadPath);
-    } else if (process.platform !== "win32" && isWindows()) {
-      // POSIX emulation on Windows (Git Bash, Cygwin, MSYS2)
-      localDownloadPath = translateWindowsToPosixPath(localDownloadPath);
-    }
+    // Normalize path slashes to standard Windows backslash format
+    let localDownloadPath = downloadPath.replace(/\//g, "\\");
 
     // Determine Shop Folder Name
     let shopFolderName = "Mixed Shops";
@@ -253,13 +137,7 @@ export async function POST(req: NextRequest) {
       console.log(`Successfully saved AWB to print log: ${targetFilePath}`);
       
       tempFilePath = targetFilePath;
-      if (isWSL) {
-        winTempFilePath = wslToWindowsPath(tempFilePath);
-      } else if (process.platform !== "win32" && isWindows()) {
-        winTempFilePath = posixToWindowsPath(tempFilePath);
-      } else {
-        winTempFilePath = tempFilePath;
-      }
+      winTempFilePath = tempFilePath;
     } catch (printLogErr) {
       console.error("Failed to save AWB print log:", printLogErr);
       // Fallback inside downloadPath directory if save fails
@@ -269,63 +147,31 @@ export async function POST(req: NextRequest) {
       }
       tempFilePath = path.join(targetDir, `print_${Date.now()}.pdf`);
       fs.writeFileSync(tempFilePath, pdfBuffer);
-      if (isWSL) {
-        winTempFilePath = wslToWindowsPath(tempFilePath);
-      } else if (process.platform !== "win32" && isWindows()) {
-        winTempFilePath = posixToWindowsPath(tempFilePath);
-      } else {
-        winTempFilePath = tempFilePath;
-      }
+      winTempFilePath = tempFilePath;
       shouldDeletePrintFile = true;
     }
 
-    // 3. Resolve command and print spools
+    // 3. Resolve SumatraPDF path on Windows
     let printCmd = "";
+    const possibleSumatraPaths = [
+      "SumatraPDF.exe",
+      "SumatraPDF",
+      'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe',
+      'C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe',
+      path.join(os.homedir(), 'AppData\\Local\\SumatraPDF\\SumatraPDF.exe')
+    ];
 
-    if (isWSL) {
-      const winHome = findWindowsUserPath();
-      const possibleSumatraPaths = [
-        path.join(winHome, "AppData/Local/SumatraPDF/SumatraPDF.exe"),
-        "/mnt/c/Program Files/SumatraPDF/SumatraPDF.exe",
-        "/mnt/c/Program Files (x86)/SumatraPDF/SumatraPDF.exe"
-      ];
-
-      let wslSumatraPath = "";
-      for (const p of possibleSumatraPaths) {
-        if (fs.existsSync(p)) {
-          wslSumatraPath = p;
-          break;
-        }
+    let sumatraCommand = "";
+    for (const p of possibleSumatraPaths) {
+      if (p.includes('\\') && fs.existsSync(p)) {
+        sumatraCommand = `"${p}"`;
+        break;
       }
-
-      if (!wslSumatraPath) {
-        wslSumatraPath = "SumatraPDF.exe";
-      }
-
-      printCmd = `"${wslSumatraPath}" -print-to-default -silent "${winTempFilePath}"`;
-    } else if (isWindows()) {
-      const possibleSumatraPaths = [
-        "SumatraPDF.exe",
-        "SumatraPDF",
-        'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe',
-        'C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe',
-        path.join(os.homedir(), 'AppData\\Local\\SumatraPDF\\SumatraPDF.exe')
-      ];
-
-      let sumatraCommand = "";
-      for (const p of possibleSumatraPaths) {
-        if (p.includes('\\') && fs.existsSync(p)) {
-          sumatraCommand = `"${p}"`;
-          break;
-        }
-      }
-      if (!sumatraCommand) {
-        sumatraCommand = "SumatraPDF";
-      }
-      printCmd = `${sumatraCommand} -print-to-default -silent "${winTempFilePath}"`;
-    } else {
-      printCmd = `lp "${tempFilePath}"`;
     }
+    if (!sumatraCommand) {
+      sumatraCommand = "SumatraPDF";
+    }
+    printCmd = `${sumatraCommand} -print-to-default -silent "${winTempFilePath}"`;
 
     console.log(`Executing print command: ${printCmd}`);
 
@@ -348,17 +194,17 @@ export async function POST(req: NextRequest) {
               { status: 500 }
             )
           );
-        } else {
-          console.log("PDF sent to printer successfully");
-          resolve(NextResponse.json({ success: true }));
+          return;
         }
+
+        resolve(NextResponse.json({ success: true }));
       });
     });
 
   } catch (err: any) {
-    console.error("Print API Error:", err);
+    console.error("Print API error:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "Internal server error" },
+      { success: false, error: err.message || "Internal Server Error" },
       { status: 500 }
     );
   }
