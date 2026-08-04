@@ -4,66 +4,6 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-// Helper to check if running inside WSL
-function isWSL(): boolean {
-  if (process.platform !== "linux") return false;
-  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
-  if (fs.existsSync("/run/WSL")) return true;
-  try {
-    if (fs.existsSync("/proc/version")) {
-      const version = fs.readFileSync("/proc/version", "utf8").toLowerCase();
-      return version.includes("microsoft") || version.includes("wsl");
-    }
-  } catch (e) {}
-  return false;
-}
-
-// Translate Windows path to POSIX path format for emulated shells (Git Bash, Cygwin, WSL)
-function resolveLocalDownloadPath(rawPath: string): string {
-  let cleanPath = rawPath.replace(/\\/g, "/");
-
-  if (process.platform !== "win32") {
-    if (/^[a-zA-Z]:\//.test(cleanPath)) {
-      const drive = cleanPath[0].toLowerCase();
-      const rest = cleanPath.substring(3);
-      
-      // WSL Check
-      if (isWSL()) {
-        return `/mnt/${drive}/${rest}`;
-      }
-      
-      // Cygwin Check
-      if (fs.existsSync("/cygdrive")) {
-        return `/cygdrive/${drive}/${rest}`;
-      }
-      
-      // Git Bash / MSYS2 / standard MINGW
-      return `/${drive}/${rest}`;
-    }
-  }
-
-  return cleanPath;
-}
-
-// Translate POSIX path format back to Windows path format for SumatraPDF (e.g. /c/path -> C:\path)
-function posixToWindowsPath(posixPath: string): string {
-  if (posixPath.startsWith("/mnt/c/")) {
-    const withoutMnt = posixPath.substring(7);
-    return `C:\\${withoutMnt.replace(/\//g, "\\")}`;
-  }
-  if (posixPath.startsWith("/cygdrive/")) {
-    const drive = posixPath[10].toUpperCase();
-    const rest = posixPath.substring(12).replace(/\//g, "\\");
-    return `${drive}:\\${rest}`;
-  }
-  if (/^\/[a-zA-Z]\//.test(posixPath)) {
-    const drive = posixPath[1].toUpperCase();
-    const rest = posixPath.substring(3).replace(/\//g, "\\");
-    return `${drive}:\\${rest}`;
-  }
-  return posixPath;
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -101,8 +41,8 @@ export async function POST(req: NextRequest) {
     let winTempFilePath = "";
     let shouldDeletePrintFile = false; // Always keep the printed logs now!
 
-    // Resolve path for local filesystem (handles native windows and POSIX emulators)
-    let localDownloadPath = resolveLocalDownloadPath(downloadPath);
+    // Direct Windows path as input by the user (no modifications or translations)
+    const localDownloadPath = downloadPath.trim();
 
     // Determine Shop Folder Name
     let shopFolderName = "Mixed Shops";
@@ -160,7 +100,7 @@ export async function POST(req: NextRequest) {
           const fileMm = String(fileDate.getMonth() + 1).padStart(2, '0');
           const fileMonthFolder = `${fileYyyy}-${fileMm}`;
 
-          let targetDir = path.join(localDownloadPath, fileCleanShopName, fileMonthFolder, "Single AWB");
+          const targetDir = path.join(localDownloadPath, fileCleanShopName, fileMonthFolder, "Single AWB");
           if (!fs.existsSync(targetDir)) {
             fs.mkdirSync(targetDir, { recursive: true });
           }
@@ -187,7 +127,7 @@ export async function POST(req: NextRequest) {
       const totalCount = saveFiles && saveFiles.length > 0 ? saveFiles.length : 1;
       const filename = `${YYYY}-${MM}-${DD}_${hh}-${min}-${ss}_TotalAWB_${totalCount}.pdf`;
       
-      let targetDir = path.join(localDownloadPath, cleanShopName, monthFolder, "Print Log AWB");
+      const targetDir = path.join(localDownloadPath, cleanShopName, monthFolder, "Print Log AWB");
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
       }
@@ -197,51 +137,25 @@ export async function POST(req: NextRequest) {
       console.log(`Successfully saved AWB to print log: ${targetFilePath}`);
       
       tempFilePath = targetFilePath;
-      
-      // If we are under POSIX mode (WSL, Git Bash, Cygwin), translate POSIX path back to Windows for SumatraPDF
-      if (process.platform !== "win32") {
-        winTempFilePath = posixToWindowsPath(tempFilePath);
-      } else {
-        winTempFilePath = tempFilePath;
-      }
+      winTempFilePath = tempFilePath;
     } catch (printLogErr) {
       console.error("Failed to save AWB print log:", printLogErr);
       // Fallback inside downloadPath directory if save fails
-      let targetDir = localDownloadPath;
+      const targetDir = localDownloadPath;
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
       }
       tempFilePath = path.join(targetDir, `print_${Date.now()}.pdf`);
       fs.writeFileSync(tempFilePath, pdfBuffer);
-      
-      if (process.platform !== "win32") {
-        winTempFilePath = posixToWindowsPath(tempFilePath);
-      } else {
-        winTempFilePath = tempFilePath;
-      }
+      winTempFilePath = tempFilePath;
       shouldDeletePrintFile = true;
     }
 
     // 3. Resolve SumatraPDF path on Windows
     let printCmd = "";
-    
-    // Resolve home directory path based on environment
-    const winHome = process.env.USERPROFILE || "";
-    let posixHome = winHome;
-    if (process.platform !== "win32") {
-      posixHome = resolveLocalDownloadPath(winHome);
-    }
-
     const possibleSumatraPaths = [
       "SumatraPDF.exe",
       "SumatraPDF",
-      path.join(posixHome, "AppData/Local/SumatraPDF/SumatraPDF.exe"),
-      "/mnt/c/Program Files/SumatraPDF/SumatraPDF.exe",
-      "/c/Program Files/SumatraPDF/SumatraPDF.exe",
-      "/cygdrive/c/Program Files/SumatraPDF/SumatraPDF.exe",
-      "/mnt/c/Program Files (x86)/SumatraPDF/SumatraPDF.exe",
-      "/c/Program Files (x86)/SumatraPDF/SumatraPDF.exe",
-      "/cygdrive/c/Program Files (x86)/SumatraPDF/SumatraPDF.exe",
       'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe',
       'C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe',
       path.join(os.homedir(), 'AppData\\Local\\SumatraPDF\\SumatraPDF.exe')
@@ -257,8 +171,8 @@ export async function POST(req: NextRequest) {
     if (!sumatraCommand) {
       sumatraCommand = "SumatraPDF";
     }
-    
     printCmd = `${sumatraCommand} -print-to-default -silent "${winTempFilePath}"`;
+
     console.log(`Executing print command: ${printCmd}`);
 
     return new Promise<NextResponse>((resolve) => {

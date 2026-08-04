@@ -775,7 +775,7 @@ export default function SettingPage() {
                   <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
                     Local Save Directory Path <span style={{ color: "#D93025" }}>* (Required)</span>
                   </label>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", maxWidth: "580px" }}>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", maxWidth: "450px" }}>
                     <input
                       type="text"
                       value={awbDownloadPath}
@@ -784,25 +784,6 @@ export default function SettingPage() {
                       className="form-input"
                       style={{ flex: 1, height: "36px" }}
                     />
-                    <button
-                      type="button"
-                      onClick={handleChooseFolder}
-                      className="btn-secondary"
-                      style={{ 
-                        height: "36px", 
-                        padding: "0 16px", 
-                        display: "flex", 
-                        alignItems: "center", 
-                        gap: "6px",
-                        borderColor: "#D3E3FD",
-                        backgroundColor: "#F8F9FA",
-                        color: "#0B57D0",
-                        fontWeight: 600,
-                        cursor: "pointer"
-                      }}
-                    >
-                      Select Folder
-                    </button>
                   </div>
                   <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
                     Example format: <code>{"{Save Path}\\{Shop Name}\\{YYYY-MM}\\{Order ID}.pdf"}</code>
