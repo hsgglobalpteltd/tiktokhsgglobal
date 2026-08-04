@@ -366,15 +366,21 @@ export default function SettingPage() {
   const handleChooseFolder = async () => {
     try {
       const res = await fetch("/api/select-folder", { method: "POST" });
-      if (!res.ok) throw new Error("Failed to open folder picker");
+      if (!res.ok) throw new Error(`HTTP error: ${res.statusText}`);
       const data = await res.json();
-      if (data.success && data.path) {
-        setAwbDownloadPath(data.path);
-        showToast(`Selected folder: ${data.path}`);
+      if (data.success) {
+        if (data.path) {
+          setAwbDownloadPath(data.path);
+          showToast(`Selected folder: ${data.path}`);
+        } else {
+          showToast("Folder selection cancelled.");
+        }
+      } else {
+        showToast(`Error: ${data.error || "Failed to select folder"}`);
       }
     } catch (err: any) {
       console.error("Choose folder error:", err);
-      showToast("Error opening folder picker dialog.");
+      showToast(`Error: ${err.message || "Error opening folder picker dialog."}`);
     }
   };
 
