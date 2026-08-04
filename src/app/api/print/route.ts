@@ -62,9 +62,10 @@ function wslToWindowsPath(wslPath: string): string {
 
 // Translate Windows path to WSL path format (e.g. C:\path -> /mnt/c/path)
 function windowsToWslPath(winPath: string): string {
-  if (/^[a-zA-Z]:\\/.test(winPath)) {
-    const drive = winPath[0].toLowerCase();
-    const rest = winPath.substring(3).replace(/\\/g, "/");
+  const cleanPath = winPath.replace(/\\/g, "/");
+  if (/^[a-zA-Z]:\//.test(cleanPath)) {
+    const drive = cleanPath[0].toLowerCase();
+    const rest = cleanPath.substring(3);
     return `/mnt/${drive}/${rest}`;
   }
   return winPath;
