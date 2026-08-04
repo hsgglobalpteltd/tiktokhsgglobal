@@ -4,22 +4,27 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
+// Helper to check if running inside Windows environment (native, git bash, cygwin, msys2)
+function isWindows() {
+  return process.platform === "win32" || (process.env.OS && process.env.OS.includes("Windows"));
+}
+
 // Helper to check if running inside WSL (Windows Subsystem for Linux)
 function getWSLDetails() {
-  const isLinux = process.platform === "linux";
-  if (!isLinux) return { isWSL: false };
-
-  let isWSL = false;
+  if (process.platform !== "linux") return { isWSL: false };
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return { isWSL: true };
+  if (fs.existsSync("/run/WSL")) return { isWSL: true };
   try {
     if (fs.existsSync("/proc/version")) {
       const version = fs.readFileSync("/proc/version", "utf8").toLowerCase();
-      isWSL = version.includes("microsoft") || version.includes("wsl");
+      if (version.includes("microsoft") || version.includes("wsl")) {
+        return { isWSL: true };
+      }
     }
   } catch (e) {
     console.error("Error reading /proc/version:", e);
   }
-
-  return { isWSL };
+  return { isWSL: false };
 }
 
 // Find Windows User Home directory in WSL
@@ -110,9 +115,10 @@ export async function POST(req: NextRequest) {
     let winTempFilePath = "";
     let shouldDeletePrintFile = false; // Always keep the printed logs now!
 
-    let localDownloadPath = downloadPath;
+    // Normalize path slashes to forward slashes for cross-platform compatibility (works on both Windows & Unix runtimes)
+    let localDownloadPath = downloadPath.replace(/\\/g, "/");
     if (isWSL) {
-      localDownloadPath = windowsToWslPath(downloadPath);
+      localDownloadPath = windowsToWslPath(localDownloadPath);
     }
 
     // Determine Shop Folder Name
@@ -254,7 +260,7 @@ export async function POST(req: NextRequest) {
       }
 
       printCmd = `"${wslSumatraPath}" -print-to-default -silent "${winTempFilePath}"`;
-    } else if (process.platform === "win32") {
+    } else if (isWindows()) {
       const possibleSumatraPaths = [
         "SumatraPDF.exe",
         "SumatraPDF",

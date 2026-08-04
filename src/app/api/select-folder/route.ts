@@ -2,10 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { exec } from "child_process";
 import fs from "fs";
 
+// Helper to check if running inside Windows environment (native, git bash, cygwin, msys2)
+function isWindows() {
+  return process.platform === "win32" || (process.env.OS && process.env.OS.includes("Windows"));
+}
+
 // Helper to check if running inside WSL
 function isWSL() {
-  const isLinux = process.platform === "linux";
-  if (!isLinux) return false;
+  if (process.platform !== "linux") return false;
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
+  if (fs.existsSync("/run/WSL")) return true;
   try {
     if (fs.existsSync("/proc/version")) {
       const version = fs.readFileSync("/proc/version", "utf8").toLowerCase();
@@ -25,9 +31,9 @@ export async function POST(req: NextRequest) {
     if (isWSL()) {
       // Under WSL, execute powershell.exe on the Windows side
       cmd = `powershell.exe -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`;
-    } else if (process.platform === "win32") {
-      // Native Windows
-      cmd = `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`;
+    } else if (isWindows()) {
+      // Windows environment (handles native cmd, powershell, git bash, msys2, cygwin)
+      cmd = `powershell.exe -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`;
     } else {
       // Mac or standard Linux: folder picker dialog fallback (we can just return error or try to run zenity/osascript)
       cmd = `osascript -e 'POSIX path of (choose folder with prompt "Select AWB Download Folder")'`;
