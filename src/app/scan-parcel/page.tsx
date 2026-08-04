@@ -117,13 +117,13 @@ export default function ScanPackPage() {
       const actual = (order.actual_status || "").toUpperCase();
       const system = (order.system_status || "").toLowerCase();
 
-      if (actual === "AWAITING_COLLECTION") {
+      if (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") {
         if (system === "packed") {
           pending_collection++;
         } else {
           pending_pack++;
         }
-      } else if (actual === "IN_TRANSIT") {
+      } else if (actual === "IN_TRANSIT" || actual === "SHIPPED" || actual === "PICK_UP") {
         in_transit++;
       } else if (actual === "DELIVERED" || actual === "COMPLETED") {
         delivered++;
@@ -145,11 +145,11 @@ export default function ScanPackPage() {
 
         // Tab filter
         if (selectedTab === "pending_pack") {
-          if (!(actual === "AWAITING_COLLECTION" && system === "unpacked")) return false;
+          if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "unpacked")) return false;
         } else if (selectedTab === "pending_collection") {
-          if (!(actual === "AWAITING_COLLECTION" && system === "packed")) return false;
+          if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "packed")) return false;
         } else if (selectedTab === "in_transit") {
-          if (actual !== "IN_TRANSIT") return false;
+          if (actual !== "IN_TRANSIT" && actual !== "SHIPPED" && actual !== "PICK_UP") return false;
         } else if (selectedTab === "delivered") {
           if (!(actual === "DELIVERED" || actual === "COMPLETED")) return false;
         }

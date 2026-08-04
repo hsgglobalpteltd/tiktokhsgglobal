@@ -72,6 +72,18 @@ export default function SettingPage() {
   const [isSyncingHistBlock, setIsSyncingHistBlock] = React.useState(false);
   const [cooldownSeconds, setCooldownSeconds] = React.useState(0);
 
+  const [awbDownloadPath, setAwbDownloadPath] = React.useState("");
+  const [awbPrintScale, setAwbPrintScale] = React.useState("100");
+  const [isPrintTerminal, setIsPrintTerminal] = React.useState(false);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      setAwbDownloadPath(localStorage.getItem("awb_download_path") || "");
+      setAwbPrintScale(localStorage.getItem("awb_print_scale") || "100");
+      setIsPrintTerminal(sessionStorage.getItem("terminal_auto_print") === "true");
+    }
+  }, []);
+
   // Load initial cooldown if any
   React.useEffect(() => {
     const lastSync = localStorage.getItem("last_historical_sync_timestamp");
@@ -349,218 +361,20 @@ export default function SettingPage() {
     return `${day}/${month}/${year}`;
   };
 
-  const [printLogs, setPrintLogs] = React.useState<string[]>([]);
-  const [countdown, setCountdown] = React.useState(0);
-  const countdownIntervalRef = React.useRef<any>(null);
+  // Terminal auto print testing functions removed
 
-  const handleTestPrint = () => {
-    if (countdown > 0) return;
-    setCountdown(60);
-    setPrintLogs(prev => [
-      ...prev,
-      `[System] Initiating AWB combined print test...`,
-      `[System] Countdown timer activated: 60 seconds (grace period verification).`
-    ]);
-
-    countdownIntervalRef.current = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(countdownIntervalRef.current);
-          runCombinedPrint();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  React.useEffect(() => {
-    return () => {
-      if (countdownIntervalRef.current) {
-        clearInterval(countdownIntervalRef.current);
-      }
-    };
-  }, []);
-
-  const runCombinedPrint = async () => {
-    setPrintLogs(prev => [...prev, "[System] Countdown finished. Fetching unprinted orders from server..."]);
-    showToast("Starting combined print job...");
+  const handleChooseFolder = async () => {
     try {
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?_t=${Date.now()}`);
-      if (!res.ok) throw new Error("Failed to fetch orders from server");
-      
-      const data = await res.json() as any;
-      if (!data.success || !data.orders) throw new Error(data.error || "No orders returned");
-
-      const terminalName = sessionStorage.getItem("terminal_name") || "Test Terminal";
-
-      // Filter: status unpacked, awb not printed, age >= 5 mins, not shipped/transit/cancelled
-      const unprintedOrders = data.orders.filter((order: any) => {
-        const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
-        const isNotPrinted = !order.awb_printed;
-        
-        const statusLower = (order.actual_status || "").toLowerCase();
-        const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled"].includes(statusLower);
-
-        const orderAge = Date.now() - (order.create_time * 1000);
-        return isUnpacked && isNotPrinted && !cannotPrint && orderAge >= 5 * 60 * 1000;
-      });
-
-      if (unprintedOrders.length === 0) {
-        setPrintLogs(prev => [...prev, "[System] Sync: No active unpacked/unprinted orders found matching print rules (min age 5 mins)."]);
-        showToast("No pending unprinted orders to test.");
-        return;
+      const res = await fetch("/api/select-folder", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to open folder picker");
+      const data = await res.json();
+      if (data.success && data.path) {
+        setAwbDownloadPath(data.path);
+        showToast(`Selected folder: ${data.path}`);
       }
-
-      setPrintLogs(prev => [...prev, `[System] Found ${unprintedOrders.length} candidate orders for printing. Generating AWBs...`]);
-      showToast(`Generating AWBs for ${unprintedOrders.length} orders...`);
-      const docUrls: string[] = [];
-      const printedOrdersInfo: { id: string, shop_id: string }[] = [];
-
-      for (const order of unprintedOrders) {
-        const orderDate = new Date(order.create_time * 1000);
-        const dd = String(orderDate.getDate()).padStart(2, '0');
-        const mm = String(orderDate.getMonth() + 1).padStart(2, '0');
-        const yyyy = orderDate.getFullYear();
-        const dateStr = `${dd}/${mm}/${yyyy}`;
-
-        try {
-          let docUrl = "";
-          const hasTracking = order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "";
-
-          if (hasTracking) {
-            const printRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-            if (printRes.ok) {
-              const printData = await printRes.json() as any;
-              if (printData.success && printData.doc_url) {
-                docUrl = printData.doc_url;
-              }
-            }
-          } else {
-            const createRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/create-awb", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                order_id: order.id,
-                shop_id: order.shop_id,
-                action_by: terminalName
-              })
-            });
-            if (createRes.ok) {
-              const createData = await createRes.json() as any;
-              if (createData.success) {
-                const printRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-                if (printRes.ok) {
-                  const printData = await printRes.json() as any;
-                  if (printData.success && printData.doc_url) {
-                    docUrl = printData.doc_url;
-                  }
-                }
-              }
-            }
-          }
-
-          if (docUrl) {
-            docUrls.push(docUrl);
-            printedOrdersInfo.push({ id: order.id, shop_id: order.shop_id });
-            setPrintLogs(prev => [...prev, `${dateStr} ID:${order.id} Success`]);
-          } else {
-            throw new Error("Unable to retrieve PDF URL");
-          }
-        } catch (err: any) {
-          console.error(`Failed to create AWB for order ${order.id}:`, err);
-          setPrintLogs(prev => [...prev, `${dateStr} ID:${order.id} Failed (${err.message})`]);
-        }
-      }
-
-      if (docUrls.length === 0) {
-        throw new Error("Failed to generate shipping documents for candidate orders.");
-      }
-
-      setPrintLogs(prev => [...prev, "[System] PDF documents fetched. Merging AWBs into a combined job..."]);
-      showToast("Downloading and merging AWBs...");
-      const { PDFDocument } = await import("pdf-lib");
-      const mergedPdf = await PDFDocument.create();
-
-      for (const docUrl of docUrls) {
-        try {
-          const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
-          const pdfRes = await fetch(proxyUrl);
-          if (pdfRes.ok) {
-            const pdfBytes = await pdfRes.arrayBuffer();
-            const pdf = await PDFDocument.load(pdfBytes);
-            const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-            copiedPages.forEach((page) => {
-              const { width, height } = page.getSize();
-              // A6 size in PDF points:
-              // 100mm = 100 * (72 / 25.4) = 283.46 points
-              // 150mm = 150 * (72 / 25.4) = 425.20 points
-              const targetWidth = 283.46;
-              const targetHeight = 425.20;
-
-              const scaleX = targetWidth / width;
-              const scaleY = targetHeight / height;
-              const scale = Math.min(scaleX, scaleY);
-
-              page.scaleContent(scale, scale);
-
-              const dx = (targetWidth - width * scale) / 2;
-              const dy = (targetHeight - height * scale) / 2;
-              page.translateContent(dx, dy);
-
-              page.setSize(targetWidth, targetHeight);
-              mergedPdf.addPage(page);
-            });
-          }
-        } catch (err) {
-          console.error("Failed to fetch/merge PDF:", err);
-        }
-      }
-
-      setPrintLogs(prev => [...prev, "[System] Spooling combined PDF to local printer..."]);
-      showToast("Spooling merged shipping documents to printer...");
-      const mergedPdfBytes = await mergedPdf.save();
-      const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
-      const blobUrl = URL.createObjectURL(blob);
-
-      // Convert to base64
-      const blobToBase64 = (b: Blob): Promise<string> => {
-        return new Promise((resVal, rejVal) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64data = reader.result as string;
-            resVal(base64data.split(',')[1]);
-          };
-          reader.onerror = rejVal;
-          reader.readAsDataURL(b);
-        });
-      };
-      const base64 = await blobToBase64(blob);
-
-      const printRes = await fetch("/api/print", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdfBase64: base64 })
-      });
-
-      if (!printRes.ok) {
-        const printErrData = await printRes.json();
-        throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
-      }
-
-      // Log printed status in backend for all
-      for (const info of printedOrdersInfo) {
-        try {
-          await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(info.id)}&shop_id=${encodeURIComponent(info.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
-        } catch {}
-      }
-      setPrintLogs(prev => [...prev, "[System] Merged PDF spooled successfully. Print completed."]);
-      showToast("Combined print job spooled successfully.");
-      // Trigger page updates
-      window.dispatchEvent(new CustomEvent("db-refresh"));
     } catch (err: any) {
-      setPrintLogs(prev => [...prev, `[Error] Test print failed: ${err.message}`]);
-      showToast(`Test print failed: ${err.message}`);
+      console.error("Choose folder error:", err);
+      showToast("Error opening folder picker dialog.");
     }
   };
 
@@ -877,93 +691,7 @@ export default function SettingPage() {
             </form>
           </div>
 
-          {/* Terminal Print Testing Section */}
-          <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
-            <div className="section-header">
-              <h2 className="section-title">Terminal Auto Print Testing</h2>
-              <div className="flex gap-2">
-                {countdown > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (countdownIntervalRef.current) {
-                        clearInterval(countdownIntervalRef.current);
-                        countdownIntervalRef.current = null;
-                      }
-                      setCountdown(0);
-                      showToast("Test print countdown stopped.");
-                      setPrintLogs(prev => [...prev, "[System] Test print countdown stopped by user."]);
-                    }}
-                    className="btn-secondary"
-                    style={{
-                      padding: "0 16px",
-                      fontSize: "12px",
-                      fontWeight: "600",
-                      height: "36px",
-                      borderRadius: "100px",
-                      borderColor: "#ea868f",
-                      color: "#dc3545",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Stop Print
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleTestPrint}
-                  disabled={countdown > 0}
-                  className="btn-primary"
-                  style={{
-                    padding: "0 16px",
-                    fontSize: "12px",
-                    fontWeight: "600",
-                    height: "36px",
-                    borderRadius: "100px",
-                    cursor: countdown > 0 ? "not-allowed" : "pointer"
-                  }}
-                >
-                  {countdown > 0 ? `Pending (${countdown}s)` : "Test Print"}
-                </button>
-              </div>
-            </div>
-            
-            <div className="flex flex-col gap-2.5">
-              <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
-                Trigger a manual test print spooler. This will fetch all active unprinted orders from the server, verify the 5-minute grace period, generate their AWBs, merge them, and print them in a combined document.
-              </p>
-              
-              {/* Monospace log terminal */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "12px" }}>
-                <span className="form-label" style={{ fontWeight: 600, fontSize: "12px" }}>Print Spooler Logs</span>
-                <div 
-                  className="no-scrollbar"
-                  style={{ 
-                    height: "260px", 
-                    overflowY: "auto", 
-                    backgroundColor: "#0B0F19", 
-                    color: "#4AF626", 
-                    fontFamily: "monospace", 
-                    fontSize: "11px", 
-                    padding: "12px", 
-                    borderRadius: "8px",
-                    border: "1px solid #1E293B",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "4px"
-                  }}
-                >
-                  {printLogs.length === 0 ? (
-                    <span style={{ color: "#64748B", fontStyle: "italic" }}>Print console idle. Click Test Print to run diagnostic print test.</span>
-                  ) : (
-                    printLogs.map((log, idx) => (
-                      <div key={idx} style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{log}</div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* Terminal Print Testing Section removed */}
 
           {/* Terminal IP Configuration Section */}
           <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
@@ -1003,6 +731,99 @@ export default function SettingPage() {
               </div>
             </div>
           </div>
+
+          {/* AWB File Download Configuration Section */}
+          {isPrintTerminal && (
+            <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
+              <div className="section-header">
+                <h2 className="section-title">AWB PDF File Download Settings</h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!awbDownloadPath.trim()) {
+                      showToast("Error: Local Save Directory Path is mandatory!");
+                      return;
+                    }
+                    const scaleNum = Number(awbPrintScale);
+                    if (isNaN(scaleNum) || scaleNum < 10 || scaleNum > 100) {
+                      showToast("Error: Print Scale must be a number between 10 and 100!");
+                      return;
+                    }
+                    localStorage.setItem("awb_download_path", awbDownloadPath.trim());
+                    localStorage.setItem("enable_awb_download", "true");
+                    localStorage.setItem("awb_print_scale", String(scaleNum));
+                    showToast("AWB settings saved successfully.");
+                  }}
+                  className="btn-primary"
+                  style={{ height: "36px" }}
+                >
+                  Save Settings
+                </button>
+              </div>
+              <div className="flex flex-col gap-2.5">
+                <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
+                  Automatically save downloaded AWB PDF documents to a specified local directory. Files will be organized separately by Shop name and month.
+                </p>
+                
+                <div className="flex flex-col gap-1 mt-2">
+                  <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
+                    Local Save Directory Path <span style={{ color: "#D93025" }}>* (Required)</span>
+                  </label>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", maxWidth: "580px" }}>
+                    <input
+                      type="text"
+                      value={awbDownloadPath}
+                      onChange={(e) => setAwbDownloadPath(e.target.value)}
+                      placeholder="e.g. C:\Users\User\Downloads\AWB"
+                      className="form-input"
+                      style={{ flex: 1, height: "36px" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleChooseFolder}
+                      className="btn-secondary"
+                      style={{ 
+                        height: "36px", 
+                        padding: "0 16px", 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "6px",
+                        borderColor: "#D3E3FD",
+                        backgroundColor: "#F8F9FA",
+                        color: "#0B57D0",
+                        fontWeight: 600,
+                        cursor: "pointer"
+                      }}
+                    >
+                      Select Folder
+                    </button>
+                  </div>
+                  <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
+                    Example format: <code>{"{Save Path}\\{Shop Name}\\{YYYY-MM}\\{Order ID}.pdf"}</code>
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-1 mt-3">
+                  <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
+                    AWB Print Scale (%) <span style={{ color: "#D93025" }}>* (Required)</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={awbPrintScale}
+                    onChange={(e) => setAwbPrintScale(e.target.value)}
+                    min="10"
+                    max="100"
+                    className="form-input"
+                    style={{ width: "100px", height: "36px", textAlign: "center" }}
+                  />
+                  <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
+                    Specifies custom scaling percentage (anchored top-left). Default is 100 for normal A6 fit.
+                  </span>
+                </div>
+
+              </div>
+            </div>
+          )}
 
         </div>
 

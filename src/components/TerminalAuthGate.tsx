@@ -187,6 +187,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         sessionStorage.setItem("terminal_name", data.name || "");
         sessionStorage.setItem("terminal_allowed_pages", JSON.stringify(data.allowedPages || []));
         sessionStorage.setItem("terminal_ip", data.ip || "");
+        sessionStorage.setItem("terminal_auto_print", String(!!data.autoPrint));
 
         const isAuth = sessionStorage.getItem("terminal_auth") === "true";
         if (isAuth) {
@@ -282,7 +283,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
   }, [terminalName]);
 
   // Helper function to print a merged PDF Blob URL in a hidden iframe
-  const printMergedPdfs = React.useCallback((blobUrl: string, orders: { id: string; shop_id: string }[]) => {
+  const printMergedPdfs = React.useCallback((blobUrl: string, orders: any[]) => {
     return new Promise<void>(async (resolve, reject) => {
       try {
         const resBlob = await fetch(blobUrl);
@@ -302,10 +303,22 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         };
         const base64 = await blobToBase64(blob);
 
+        const saveFilesInfo = orders.map(order => ({
+          pdfUrl: order.doc_url,
+          shopName: order.shop_name || "Unknown Shop",
+          orderId: order.id,
+          createTime: order.create_time
+        }));
+
         const printRes = await fetch("/api/print", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfBase64: base64 })
+          body: JSON.stringify({
+            pdfBase64: base64,
+            downloadPath: localStorage.getItem("awb_download_path") || "",
+            enableDownload: localStorage.getItem("enable_awb_download") === "true",
+            saveFiles: saveFilesInfo
+          })
         });
 
         if (!printRes.ok) {
@@ -489,6 +502,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
               const printData = await printRes.json();
               if (printData.success && printData.doc_url) {
                 pdfUrls.push(printData.doc_url);
+                order.doc_url = printData.doc_url;
                 printedOrderIds.push(order);
                 addLog("success", `ID : ${order.id} AWB Printed`, true);
               } else {
@@ -515,6 +529,9 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         if (pdfUrls.length > 0) {
           // Download and merge PDFs
           const mergedPdf = await PDFDocument.create();
+          const scalePercentVal = Number(localStorage.getItem("awb_print_scale") || "100");
+          const printScale = scalePercentVal / 100;
+
           for (const url of pdfUrls) {
             const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(url)}`;
             const pdfRes = await fetch(proxyUrl);
@@ -529,12 +546,13 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
               const scaleX = targetWidth / width;
               const scaleY = targetHeight / height;
-              const scale = Math.min(scaleX, scaleY);
+              const baseScale = Math.min(scaleX, scaleY);
+              const scale = baseScale * printScale;
 
               page.scaleContent(scale, scale);
 
-              const dx = (targetWidth - width * scale) / 2;
-              const dy = (targetHeight - height * scale) / 2;
+              const dx = 0;
+              const dy = targetHeight - (height * scale);
               page.translateContent(dx, dy);
 
               page.setSize(targetWidth, targetHeight);
@@ -546,7 +564,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
           const mergedBlobUrl = URL.createObjectURL(blob);
 
-          await printMergedPdfs(mergedBlobUrl, printedOrderIds.map(o => ({ id: o.id, shop_id: o.shop_id })));
+          await printMergedPdfs(mergedBlobUrl, printedOrderIds);
           URL.revokeObjectURL(mergedBlobUrl);
         }
       } else {
@@ -777,6 +795,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         sessionStorage.setItem("terminal_auth", "true");
         sessionStorage.setItem("terminal_name", terminalName);
         sessionStorage.setItem("terminal_allowed_pages", JSON.stringify(allowedPages));
+        sessionStorage.setItem("terminal_auto_print", String(autoPrintEnabled));
         setStatus("authenticated");
       } else {
         setPinError(true);

@@ -102,10 +102,13 @@ export default function OrdersPage() {
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [orders, setOrders] = React.useState<Order[]>([]);
   const [terminalName, setTerminalName] = React.useState("PC Office");
+  const [isPrintTerminal, setIsPrintTerminal] = React.useState(false);
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       const name = sessionStorage.getItem("terminal_name");
       if (name) setTerminalName(name);
+      const isAutoPrint = sessionStorage.getItem("terminal_auto_print") === "true";
+      setIsPrintTerminal(isAutoPrint);
     }
   }, []);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -402,6 +405,9 @@ export default function OrdersPage() {
         const { PDFDocument } = await import("pdf-lib");
         const singlePdf = await PDFDocument.load(pdfBytes);
         const pages = singlePdf.getPages();
+        const scalePercentVal = Number(localStorage.getItem("awb_print_scale") || "100");
+        const printScale = scalePercentVal / 100;
+
         pages.forEach((page) => {
           const { width, height } = page.getSize();
           const targetWidth = 283.46;
@@ -409,12 +415,13 @@ export default function OrdersPage() {
 
           const scaleX = targetWidth / width;
           const scaleY = targetHeight / height;
-          const scale = Math.min(scaleX, scaleY);
+          const baseScale = Math.min(scaleX, scaleY);
+          const scale = baseScale * printScale;
 
           page.scaleContent(scale, scale);
 
-          const dx = (targetWidth - width * scale) / 2;
-          const dy = (targetHeight - height * scale) / 2;
+          const dx = 0;
+          const dy = targetHeight - (height * scale);
           page.translateContent(dx, dy);
 
           page.setSize(targetWidth, targetHeight);
@@ -439,7 +446,19 @@ export default function OrdersPage() {
         const printRes = await fetch("/api/print", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfBase64: base64 })
+          body: JSON.stringify({
+            pdfBase64: base64,
+            downloadPath: localStorage.getItem("awb_download_path") || "",
+            enableDownload: localStorage.getItem("enable_awb_download") === "true",
+            saveFiles: order ? [
+              {
+                pdfBase64: base64,
+                shopName: order.shop_name || "Unknown Shop",
+                orderId: order.id,
+                createTime: order.create_time
+              }
+            ] : []
+          })
         });
 
         if (!printRes.ok) {
@@ -469,6 +488,7 @@ export default function OrdersPage() {
 
     const docUrls: string[] = [];
     const failedOrders: string[] = [];
+    const saveFilesInfo: any[] = [];
 
     try {
       let count = 0;
@@ -491,6 +511,12 @@ export default function OrdersPage() {
           const data = await res.json() as any;
           if (data.success && data.doc_url) {
             docUrls.push(data.doc_url);
+            saveFilesInfo.push({
+              pdfUrl: data.doc_url,
+              shopName: order.shop_name || "Unknown Shop",
+              orderId: order.id,
+              createTime: order.create_time
+            });
           } else {
             throw new Error(data.error || "No document URL returned");
           }
@@ -507,6 +533,9 @@ export default function OrdersPage() {
       setBulkPrintProgress("Merging PDFs...");
       const mergedPdf = await PDFDocument.create();
       let mergedPageCount = 0;
+
+      const scalePercentVal = Number(localStorage.getItem("awb_print_scale") || "100");
+      const printScale = scalePercentVal / 100;
 
       for (const docUrl of docUrls) {
         try {
@@ -528,12 +557,13 @@ export default function OrdersPage() {
 
             const scaleX = targetWidth / width;
             const scaleY = targetHeight / height;
-            const scale = Math.min(scaleX, scaleY);
+            const baseScale = Math.min(scaleX, scaleY);
+            const scale = baseScale * printScale;
 
             page.scaleContent(scale, scale);
 
-            const dx = (targetWidth - width * scale) / 2;
-            const dy = (targetHeight - height * scale) / 2;
+            const dx = 0;
+            const dy = targetHeight - (height * scale);
             page.translateContent(dx, dy);
 
             page.setSize(targetWidth, targetHeight);
@@ -569,7 +599,12 @@ export default function OrdersPage() {
       const printRes = await fetch("/api/print", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdfBase64: base64 })
+        body: JSON.stringify({
+          pdfBase64: base64,
+          downloadPath: localStorage.getItem("awb_download_path") || "",
+          enableDownload: localStorage.getItem("enable_awb_download") === "true",
+          saveFiles: saveFilesInfo
+        })
       });
 
       if (!printRes.ok) {
@@ -638,11 +673,11 @@ export default function OrdersPage() {
       case "all":
         return true;
       case "pending_pack":
-        return actual === "AWAITING_COLLECTION" && system === "unpacked";
+        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "unpacked";
       case "pending_collection":
-        return actual === "AWAITING_COLLECTION" && system === "packed";
+        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "packed";
       case "in_transit":
-        return actual === "IN_TRANSIT";
+        return actual === "IN_TRANSIT" || actual === "SHIPPED" || actual === "PICK_UP";
       case "delivered":
         return actual === "DELIVERED" || actual === "COMPLETED";
       default:
@@ -952,7 +987,7 @@ export default function OrdersPage() {
               </button>
 
               {/* Bulk Print Button */}
-              {selectedOrderIds.size > 0 && (
+              {isPrintTerminal && selectedOrderIds.size > 0 && (
                 <button
                   onClick={triggerBulkPrint}
                   disabled={isBulkPrinting}
@@ -1273,7 +1308,7 @@ export default function OrdersPage() {
                           {/* Action */}
                           <td className="p-3 align-top">
                             <div className="flex items-center gap-2">
-                              {!["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED"].includes((order.actual_status || "").toUpperCase()) && (
+                              {isPrintTerminal && !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED"].includes((order.actual_status || "").toUpperCase()) && (
                                 <>
                                   {!(order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "") ? (
                                     <button
@@ -1891,7 +1926,7 @@ export default function OrdersPage() {
                   logsList.push({
                     action: "In Transit",
                     actionBy: "System",
-                    remark: "Status updated to Transit (via TikTok Sync)",
+                    remark: "Status updated to Transit",
                     timestamp: selectedOrderForLogs.transit_at
                   });
                 }
@@ -1905,7 +1940,7 @@ export default function OrdersPage() {
                   logsList.push({
                     action: "Delivered",
                     actionBy: "System",
-                    remark: "Status updated to Delivered (via TikTok Sync)",
+                    remark: "Status updated to Delivered",
                     timestamp: selectedOrderForLogs.delivered_at
                   });
                 }
