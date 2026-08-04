@@ -6,16 +6,6 @@ import { PDFDocument } from "pdf-lib";
 
 const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
 
-const getPrintApiUrl = () => {
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname;
-    if (host !== "localhost" && host !== "127.0.0.1") {
-      return "http://localhost:3000/api/print";
-    }
-  }
-  return "/api/print";
-};
-
 interface PrintLog {
   timestamp: string;
   type: "info" | "success" | "error";
@@ -265,7 +255,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         };
         const base64 = await blobToBase64(blob);
 
-        const printRes = await fetch(getPrintApiUrl(), {
+        const printRes = await fetch("/api/print", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pdfBase64: base64 })
@@ -320,7 +310,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           createTime: order.create_time
         }));
 
-        const printRes = await fetch(getPrintApiUrl(), {
+        const printRes = await fetch("/api/print", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

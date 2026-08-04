@@ -4,19 +4,6 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 200,
-    headers: corsHeaders,
-  });
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -25,7 +12,7 @@ export async function POST(req: NextRequest) {
     if (!downloadPath || downloadPath.trim() === "") {
       return NextResponse.json(
         { success: false, error: "Local AWB save directory path is not configured in Settings. Please set it and try again." },
-        { status: 400, headers: corsHeaders }
+        { status: 400 }
       );
     }
 
@@ -38,7 +25,7 @@ export async function POST(req: NextRequest) {
       if (!res.ok) {
         return NextResponse.json(
           { success: false, error: `Failed to fetch PDF: ${res.statusText}` },
-          { status: 400, headers: corsHeaders }
+          { status: 400 }
         );
       }
       const arrayBuffer = await res.arrayBuffer();
@@ -46,7 +33,7 @@ export async function POST(req: NextRequest) {
     } else {
       return NextResponse.json(
         { success: false, error: "Missing pdfBase64 or pdfUrl parameter" },
-        { status: 400, headers: corsHeaders }
+        { status: 400 }
       );
     }
 
@@ -204,13 +191,13 @@ export async function POST(req: NextRequest) {
           resolve(
             NextResponse.json(
               { success: false, error: `Print failed: ${error.message}`, stderr },
-              { status: 500, headers: corsHeaders }
+              { status: 500 }
             )
           );
           return;
         }
 
-        resolve(NextResponse.json({ success: true }, { headers: corsHeaders }));
+        resolve(NextResponse.json({ success: true }));
       });
     });
 
@@ -218,7 +205,7 @@ export async function POST(req: NextRequest) {
     console.error("Print API error:", err);
     return NextResponse.json(
       { success: false, error: err.message || "Internal Server Error" },
-      { status: 500, headers: corsHeaders }
+      { status: 500 }
     );
   }
 }
