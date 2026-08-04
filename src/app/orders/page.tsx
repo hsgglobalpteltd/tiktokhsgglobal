@@ -98,6 +98,16 @@ const computeOrderSyncStats = (prevOrders: Order[], newOrders: Order[]) => {
   return { newCount, details };
 };
 
+const getPrintApiUrl = () => {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host !== "localhost" && host !== "127.0.0.1") {
+      return "http://localhost:3000/api/print";
+    }
+  }
+  return "/api/print";
+};
+
 export default function OrdersPage() {
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [orders, setOrders] = React.useState<Order[]>([]);
@@ -443,7 +453,7 @@ export default function OrdersPage() {
         };
         const base64 = await blobToBase64(blob);
 
-        const printRes = await fetch("/api/print", {
+        const printRes = await fetch(getPrintApiUrl(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -596,7 +606,7 @@ export default function OrdersPage() {
       };
       const base64 = await blobToBase64(blob);
 
-      const printRes = await fetch("/api/print", {
+      const printRes = await fetch(getPrintApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
