@@ -30,6 +30,21 @@ function translateWindowsToPosixPath(winPath: string): string {
   return winPath;
 }
 
+// Translate POSIX path format back to Windows path format for SumatraPDF (e.g. /c/path -> C:\path)
+function posixToWindowsPath(posixPath: string): string {
+  if (posixPath.startsWith("/cygdrive/")) {
+    const drive = posixPath[10].toUpperCase();
+    const rest = posixPath.substring(12).replace(/\//g, "\\");
+    return `${drive}:\\${rest}`;
+  }
+  if (/^\/[a-zA-Z]\//.test(posixPath)) {
+    const drive = posixPath[1].toUpperCase();
+    const rest = posixPath.substring(3).replace(/\//g, "\\");
+    return `${drive}:\\${rest}`;
+  }
+  return posixPath;
+}
+
 // Helper to check if running inside WSL (Windows Subsystem for Linux)
 function getWSLDetails() {
   if (process.platform !== "linux") return { isWSL: false };
@@ -240,6 +255,8 @@ export async function POST(req: NextRequest) {
       tempFilePath = targetFilePath;
       if (isWSL) {
         winTempFilePath = wslToWindowsPath(tempFilePath);
+      } else if (process.platform !== "win32" && isWindows()) {
+        winTempFilePath = posixToWindowsPath(tempFilePath);
       } else {
         winTempFilePath = tempFilePath;
       }
@@ -254,6 +271,8 @@ export async function POST(req: NextRequest) {
       fs.writeFileSync(tempFilePath, pdfBuffer);
       if (isWSL) {
         winTempFilePath = wslToWindowsPath(tempFilePath);
+      } else if (process.platform !== "win32" && isWindows()) {
+        winTempFilePath = posixToWindowsPath(tempFilePath);
       } else {
         winTempFilePath = tempFilePath;
       }
