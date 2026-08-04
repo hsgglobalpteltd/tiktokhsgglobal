@@ -4,7 +4,11 @@ import fs from "fs";
 
 // Helper to check if running inside Windows environment (native, git bash, cygwin, msys2)
 function isWindows() {
-  return process.platform === "win32" || (process.env.OS && process.env.OS.includes("Windows"));
+  if (process.platform === "win32") return true;
+  if (process.env.OS && /windows/i.test(process.env.OS)) return true;
+  if (process.env.WINDIR || process.env.SystemRoot) return true;
+  if (fs.existsSync("/c/Windows") || fs.existsSync("/mnt/c/Windows") || fs.existsSync("C:/Windows") || fs.existsSync("C:\\Windows")) return true;
+  return false;
 }
 
 // Helper to check if running inside WSL

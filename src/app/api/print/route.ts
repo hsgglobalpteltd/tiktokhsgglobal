@@ -6,7 +6,28 @@ import os from "os";
 
 // Helper to check if running inside Windows environment (native, git bash, cygwin, msys2)
 function isWindows() {
-  return process.platform === "win32" || (process.env.OS && process.env.OS.includes("Windows"));
+  if (process.platform === "win32") return true;
+  if (process.env.OS && /windows/i.test(process.env.OS)) return true;
+  if (process.env.WINDIR || process.env.SystemRoot) return true;
+  if (fs.existsSync("/c/Windows") || fs.existsSync("/mnt/c/Windows") || fs.existsSync("C:/Windows") || fs.existsSync("C:\\Windows")) return true;
+  return false;
+}
+
+// Translate Windows path to POSIX path format for emulated shells on Windows (Cygwin, MSYS2, Git Bash)
+function translateWindowsToPosixPath(winPath: string): string {
+  const cleanPath = winPath.replace(/\\/g, "/");
+  if (/^[a-zA-Z]:\//.test(cleanPath)) {
+    const drive = cleanPath[0].toLowerCase();
+    const rest = cleanPath.substring(3);
+    
+    // Check if it's Cygwin
+    if (fs.existsSync("/cygdrive")) {
+      return `/cygdrive/${drive}/${rest}`;
+    }
+    // Git Bash / MSYS2 / standard MINGW
+    return `/${drive}/${rest}`;
+  }
+  return winPath;
 }
 
 // Helper to check if running inside WSL (Windows Subsystem for Linux)
@@ -119,6 +140,9 @@ export async function POST(req: NextRequest) {
     let localDownloadPath = downloadPath.replace(/\\/g, "/");
     if (isWSL) {
       localDownloadPath = windowsToWslPath(localDownloadPath);
+    } else if (process.platform !== "win32" && isWindows()) {
+      // POSIX emulation on Windows (Git Bash, Cygwin, MSYS2)
+      localDownloadPath = translateWindowsToPosixPath(localDownloadPath);
     }
 
     // Determine Shop Folder Name
