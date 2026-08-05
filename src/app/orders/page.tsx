@@ -466,70 +466,44 @@ export default function OrdersPage() {
         };
         const originalBase64 = arrayBufferToBase64(pdfBytes);
 
-        const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-        if (isLocalhost) {
-          const printRes = await fetch("/api/print", {
+        // Trigger browser downloads directly for print (scaled) and upload single to R2
+        const now = new Date();
+        const DD = String(now.getDate()).padStart(2, '0');
+        const MM = String(now.getMonth() + 1).padStart(2, '0');
+        const YYYY = now.getFullYear();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        
+        const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
+        
+        // Download scaled AWB PDF to browser (triggers PowerShell watcher to print scaled)
+        triggerBlobDownload(blob, filename);
+
+        // Upload individual original single AWB PDF (No Scale) directly to R2 bucket
+        if (order) {
+          const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
+          const createTime = Number(order.create_time) > 1e11 ? Number(order.create_time) : Number(order.create_time) * 1000;
+          const dateObj = new Date(createTime);
+          const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const shopYYYY = dateObj.getFullYear();
+          const monthStr = `${shopMM}${shopYYYY}`;
+          
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${order.id}.pdf`;
+          const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          
+          fetch(uploadUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              pdfBase64: base64, // Scaled for 0000 AWB Print Log
-              downloadPath: localStorage.getItem("awb_download_path") || "",
-              enableDownload: localStorage.getItem("enable_awb_download") === "true",
-              saveFiles: order ? [
-                {
-                  pdfBase64: originalBase64, // Original (No Scale) for Shop directory
-                  shopName: order.shop_name || "Unknown Shop",
-                  orderId: order.id,
-                  createTime: order.create_time
-                }
-              ] : []
-            })
+            headers: { "Content-Type": "application/pdf" },
+            body: pdfBytes
+          }).then(uploadRes => {
+            if (uploadRes.ok) {
+              console.log(`Successfully uploaded single AWB to R2: ${r2Filename}`);
+            } else {
+              console.error(`Failed to upload AWB to R2. Status: ${uploadRes.status}`);
+            }
+          }).catch(uploadErr => {
+            console.error("Failed to upload AWB to R2:", uploadErr);
           });
-
-          if (!printRes.ok) {
-            const printErrData = await printRes.json();
-            throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
-          }
-        } else {
-          // Live production site: trigger browser downloads directly
-          const now = new Date();
-          const DD = String(now.getDate()).padStart(2, '0');
-          const MM = String(now.getMonth() + 1).padStart(2, '0');
-          const YYYY = now.getFullYear();
-          const hh = String(now.getHours()).padStart(2, '0');
-          const mm = String(now.getMinutes()).padStart(2, '0');
-          
-          const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
-          
-          // Download scaled AWB PDF to browser (triggers PowerShell watcher to print scaled)
-          triggerBlobDownload(blob, filename);
-
-          // Upload individual original single AWB PDF (No Scale) directly to R2 bucket
-          if (order) {
-            const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
-            const createTime = Number(order.create_time) > 1e11 ? Number(order.create_time) : Number(order.create_time) * 1000;
-            const dateObj = new Date(createTime);
-            const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
-            const shopYYYY = dateObj.getFullYear();
-            const monthStr = `${shopMM}${shopYYYY}`;
-            
-            const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${order.id}.pdf`;
-            const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
-            
-            fetch(uploadUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/pdf" },
-              body: pdfBytes
-            }).then(uploadRes => {
-              if (uploadRes.ok) {
-                console.log(`Successfully uploaded single AWB to R2: ${r2Filename}`);
-              } else {
-                console.error(`Failed to upload AWB to R2. Status: ${uploadRes.status}`);
-              }
-            }).catch(uploadErr => {
-              console.error("Failed to upload AWB to R2:", uploadErr);
-            });
-          }
         }
 
         showToast("AWB printed silently successfully");
@@ -669,77 +643,58 @@ export default function OrdersPage() {
       };
       const base64 = await blobToBase64(blob);
 
-      const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-      if (isLocalhost) {
-        const printRes = await fetch("/api/print", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            pdfBase64: base64,
-            downloadPath: localStorage.getItem("awb_download_path") || "",
-            enableDownload: localStorage.getItem("enable_awb_download") === "true",
-            saveFiles: saveFilesInfo
-          })
-        });
+      // Trigger browser downloads directly for bulk print (scaled) and upload individual to R2
+      const now = new Date();
+      const DD = String(now.getDate()).padStart(2, '0');
+      const MM = String(now.getMonth() + 1).padStart(2, '0');
+      const YYYY = now.getFullYear();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      
+      const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
+      
+      // Download combined AWB PDF to browser (triggers PowerShell watcher)
+      triggerBlobDownload(blob, filename);
 
-        if (!printRes.ok) {
-          const printErrData = await printRes.json();
-          throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
-        }
-      } else {
-        // Live production site: trigger browser downloads directly
-        const now = new Date();
-        const DD = String(now.getDate()).padStart(2, '0');
-        const MM = String(now.getMonth() + 1).padStart(2, '0');
-        const YYYY = now.getFullYear();
-        const hh = String(now.getHours()).padStart(2, '0');
-        const mm = String(now.getMinutes()).padStart(2, '0');
-        
-        const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
-        
-        // Download combined AWB PDF to browser (triggers PowerShell watcher)
-        triggerBlobDownload(blob, filename);
-
-        // Upload individual original single AWB PDFs (No Scale) directly to R2 bucket
-        for (const file of saveFilesInfo) {
-          try {
-            let fileData: ArrayBuffer;
-            if (file.pdfBytes) {
-              fileData = file.pdfBytes;
-            } else if (file.pdfUrl) {
-              const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
-              const fileRes = await fetch(proxyUrl);
-              fileData = await fileRes.arrayBuffer();
-            } else {
-              continue;
-            }
-
-            const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
-            const createTime = Number(file.createTime) > 1e11 ? Number(file.createTime) : Number(file.createTime) * 1000;
-            const dateObj = new Date(createTime);
-            const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
-            const shopYYYY = dateObj.getFullYear();
-            const monthStr = `${shopMM}${shopYYYY}`;
-            
-            const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${file.orderId}.pdf`;
-            const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
-            
-            fetch(uploadUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/pdf" },
-              body: fileData
-            }).then(uploadRes => {
-              if (uploadRes.ok) {
-                console.log(`Successfully uploaded bulk single AWB to R2: ${r2Filename}`);
-              } else {
-                console.error(`Failed to upload bulk single AWB to R2: ${r2Filename}. Status: ${uploadRes.status}`);
-              }
-            }).catch(uploadErr => {
-              console.error(`Failed to upload bulk single AWB to R2: ${r2Filename}`, uploadErr);
-            });
-          } catch (err) {
-            console.error(`Failed to process/upload single AWB for order ${file.orderId} to R2:`, err);
+      // Upload individual original single AWB PDFs (No Scale) directly to R2 bucket
+      for (const file of saveFilesInfo) {
+        try {
+          let fileData: ArrayBuffer;
+          if (file.pdfBytes) {
+            fileData = file.pdfBytes;
+          } else if (file.pdfUrl) {
+            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const fileRes = await fetch(proxyUrl);
+            fileData = await fileRes.arrayBuffer();
+          } else {
+            continue;
           }
+
+          const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
+          const createTime = Number(file.createTime) > 1e11 ? Number(file.createTime) : Number(file.createTime) * 1000;
+          const dateObj = new Date(createTime);
+          const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const shopYYYY = dateObj.getFullYear();
+          const monthStr = `${shopMM}${shopYYYY}`;
+          
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${file.orderId}.pdf`;
+          const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          
+          fetch(uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: fileData
+          }).then(uploadRes => {
+            if (uploadRes.ok) {
+              console.log(`Successfully uploaded bulk single AWB to R2: ${r2Filename}`);
+            } else {
+              console.error(`Failed to upload bulk single AWB to R2: ${r2Filename}. Status: ${uploadRes.status}`);
+            }
+          }).catch(uploadErr => {
+            console.error(`Failed to upload bulk single AWB to R2: ${r2Filename}`, uploadErr);
+          });
+        } catch (err) {
+          console.error(`Failed to process/upload single AWB for order ${file.orderId} to R2:`, err);
         }
       }
 

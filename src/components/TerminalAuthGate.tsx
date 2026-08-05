@@ -266,59 +266,40 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         };
         const base64 = await blobToBase64(blob);
 
-        const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-        if (isLocalhost) {
-          const printRes = await fetch("/api/print", {
+        // Trigger browser downloads directly for print (scaled) and upload single to R2
+        const now = new Date();
+        const DD = String(now.getDate()).padStart(2, '0');
+        const MM = String(now.getMonth() + 1).padStart(2, '0');
+        const YYYY = now.getFullYear();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        
+        const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
+        
+        // Download combined AWB PDF to browser (triggers PowerShell watcher)
+        triggerBlobDownload(blob, filename);
+
+        // Upload individual original single AWB PDF (No Scale) directly to R2 bucket
+        try {
+          const currentYearMonth = `${MM}${YYYY}`;
+          const r2Filename = `Tiktok AWB/Unknown Shop/${currentYearMonth}/${orderId}.pdf`;
+          const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+
+          fetch(uploadUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              pdfBase64: base64,
-              downloadPath: localStorage.getItem("awb_download_path") || "",
-              enableDownload: localStorage.getItem("enable_awb_download") === "true",
-              saveFiles: orderId ? [{ pdfUrl, shopName: "Unknown Shop", orderId, createTime: Date.now() }] : []
-            })
+            headers: { "Content-Type": "application/pdf" },
+            body: blob
+          }).then(uploadRes => {
+            if (uploadRes.ok) {
+              console.log(`Successfully uploaded single AWB to R2: ${r2Filename}`);
+            } else {
+              console.error(`Failed to upload single AWB to R2: ${r2Filename}. Status: ${uploadRes.status}`);
+            }
+          }).catch(uploadErr => {
+            console.error(`Failed to upload single AWB to R2: ${r2Filename}`, uploadErr);
           });
-
-          if (!printRes.ok) {
-            const printErrData = await printRes.json();
-            throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
-          }
-        } else {
-          // Live production site: trigger browser downloads directly
-          const now = new Date();
-          const DD = String(now.getDate()).padStart(2, '0');
-          const MM = String(now.getMonth() + 1).padStart(2, '0');
-          const YYYY = now.getFullYear();
-          const hh = String(now.getHours()).padStart(2, '0');
-          const mm = String(now.getMinutes()).padStart(2, '0');
-          
-          const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
-          
-          // Download combined AWB PDF to browser (triggers PowerShell watcher)
-          triggerBlobDownload(blob, filename);
-
-          // Upload individual original single AWB PDF (No Scale) directly to R2 bucket
-          try {
-            const currentYearMonth = `${MM}${YYYY}`;
-            const r2Filename = `Tiktok AWB/Unknown Shop/${currentYearMonth}/${orderId}.pdf`;
-            const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
-
-            fetch(uploadUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/pdf" },
-              body: blob
-            }).then(uploadRes => {
-              if (uploadRes.ok) {
-                console.log(`Successfully uploaded single AWB to R2: ${r2Filename}`);
-              } else {
-                console.error(`Failed to upload single AWB to R2: ${r2Filename}. Status: ${uploadRes.status}`);
-              }
-            }).catch(uploadErr => {
-              console.error(`Failed to upload single AWB to R2: ${r2Filename}`, uploadErr);
-            });
-          } catch (err) {
-            console.error(`Failed to upload single AWB for order ${orderId} to R2:`, err);
-          }
+        } catch (err) {
+          console.error(`Failed to upload single AWB for order ${orderId} to R2:`, err);
         }
 
         try {
@@ -365,73 +346,54 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           createTime: order.create_time
         }));
 
-        const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-        if (isLocalhost) {
-          const printRes = await fetch("/api/print", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              pdfBase64: base64,
-              downloadPath: localStorage.getItem("awb_download_path") || "",
-              enableDownload: localStorage.getItem("enable_awb_download") === "true",
-              saveFiles: saveFilesInfo
-            })
-          });
+        // Trigger browser downloads directly for bulk print (scaled) and upload individual to R2
+        const now = new Date();
+        const DD = String(now.getDate()).padStart(2, '0');
+        const MM = String(now.getMonth() + 1).padStart(2, '0');
+        const YYYY = now.getFullYear();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        
+        const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
+        
+        // Download combined AWB PDF to browser (triggers PowerShell watcher)
+        triggerBlobDownload(blob, filename);
 
-          if (!printRes.ok) {
-            const printErrData = await printRes.json();
-            throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
-          }
-        } else {
-          // Live production site: trigger browser downloads directly
-          const now = new Date();
-          const DD = String(now.getDate()).padStart(2, '0');
-          const MM = String(now.getMonth() + 1).padStart(2, '0');
-          const YYYY = now.getFullYear();
-          const hh = String(now.getHours()).padStart(2, '0');
-          const mm = String(now.getMinutes()).padStart(2, '0');
-          
-          const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
-          
-          // Download combined AWB PDF to browser (triggers PowerShell watcher)
-          triggerBlobDownload(blob, filename);
+        // Upload individual original single AWB PDFs (No Scale) directly to R2 bucket
+        for (const file of saveFilesInfo) {
+          try {
+            if (!file.pdfUrl) continue;
+            
+            const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const fileRes = await fetch(proxyUrl);
+            if (!fileRes.ok) throw new Error(`HTTP ${fileRes.status}`);
+            const fileData = await fileRes.arrayBuffer();
 
-          // Upload individual original single AWB PDFs (No Scale) directly to R2 bucket
-          for (const file of saveFilesInfo) {
-            try {
-              if (!file.pdfUrl) continue;
-              
-              const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
-              const fileRes = await fetch(proxyUrl);
-              if (!fileRes.ok) throw new Error(`HTTP ${fileRes.status}`);
-              const fileData = await fileRes.arrayBuffer();
+            const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
+            const createTime = Number(file.createTime) > 1e11 ? Number(file.createTime) : Number(file.createTime) * 1000;
+            const dateObj = new Date(createTime);
+            const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const shopYYYY = dateObj.getFullYear();
+            const monthStr = `${shopMM}${shopYYYY}`;
 
-              const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
-              const createTime = Number(file.createTime) > 1e11 ? Number(file.createTime) : Number(file.createTime) * 1000;
-              const dateObj = new Date(createTime);
-              const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
-              const shopYYYY = dateObj.getFullYear();
-              const monthStr = `${shopMM}${shopYYYY}`;
+            const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${file.orderId}.pdf`;
+            const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
 
-              const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${file.orderId}.pdf`;
-              const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
-
-              fetch(uploadUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/pdf" },
-                body: fileData
-              }).then(uploadRes => {
-                if (uploadRes.ok) {
-                  console.log(`Successfully uploaded single AWB to R2: ${r2Filename}`);
-                } else {
-                  console.error(`Failed to upload single AWB to R2: ${r2Filename}. Status: ${uploadRes.status}`);
-                }
-              }).catch(uploadErr => {
-                console.error(`Failed to upload single AWB to R2: ${r2Filename}`, uploadErr);
-              });
-            } catch (err) {
-              console.error(`Failed to upload single AWB for order ${file.orderId} to R2:`, err);
-            }
+            fetch(uploadUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/pdf" },
+              body: fileData
+            }).then(uploadRes => {
+              if (uploadRes.ok) {
+                console.log(`Successfully uploaded single AWB to R2: ${r2Filename}`);
+              } else {
+                console.error(`Failed to upload single AWB to R2: ${r2Filename}. Status: ${uploadRes.status}`);
+              }
+            }).catch(uploadErr => {
+              console.error(`Failed to upload single AWB to R2: ${r2Filename}`, uploadErr);
+            });
+          } catch (err) {
+            console.error(`Failed to upload single AWB for order ${file.orderId} to R2:`, err);
           }
         }
 
