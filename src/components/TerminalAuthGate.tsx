@@ -6,6 +6,17 @@ import { PDFDocument } from "pdf-lib";
 
 const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
 
+const triggerBlobDownload = (blob: Blob, filename: string) => {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+};
+
 interface PrintLog {
   timestamp: string;
   type: "info" | "success" | "error";
@@ -255,15 +266,45 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         };
         const base64 = await blobToBase64(blob);
 
-        const printRes = await fetch("/api/print", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfBase64: base64 })
-        });
+        const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+        if (isLocalhost) {
+          const printRes = await fetch("/api/print", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pdfBase64: base64,
+              downloadPath: localStorage.getItem("awb_download_path") || "",
+              enableDownload: localStorage.getItem("enable_awb_download") === "true",
+              saveFiles: orderId ? [{ pdfUrl, shopName: "Unknown Shop", orderId, createTime: Date.now() }] : []
+            })
+          });
 
-        if (!printRes.ok) {
-          const printErrData = await printRes.json();
-          throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
+          if (!printRes.ok) {
+            const printErrData = await printRes.json();
+            throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
+          }
+        } else {
+          // Live production site: trigger browser downloads directly
+          const now = new Date();
+          const DD = String(now.getDate()).padStart(2, '0');
+          const MM = String(now.getMonth() + 1).padStart(2, '0');
+          const YYYY = now.getFullYear();
+          const hh = String(now.getHours()).padStart(2, '0');
+          const mm = String(now.getMinutes()).padStart(2, '0');
+          
+          const filename = `${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
+          
+          // Download combined AWB PDF to browser (triggers PowerShell watcher)
+          triggerBlobDownload(blob, filename);
+
+          // Download individual single AWB PDF if save is enabled
+          if (localStorage.getItem("enable_awb_download") === "true") {
+            try {
+              triggerBlobDownload(blob, `${orderId}.pdf`);
+            } catch (err) {
+              console.error(`Failed to download single AWB for order ${orderId}:`, err);
+            }
+          }
         }
 
         try {
@@ -310,20 +351,55 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           createTime: order.create_time
         }));
 
-        const printRes = await fetch("/api/print", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            pdfBase64: base64,
-            downloadPath: localStorage.getItem("awb_download_path") || "",
-            enableDownload: localStorage.getItem("enable_awb_download") === "true",
-            saveFiles: saveFilesInfo
-          })
-        });
+        const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+        if (isLocalhost) {
+          const printRes = await fetch("/api/print", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pdfBase64: base64,
+              downloadPath: localStorage.getItem("awb_download_path") || "",
+              enableDownload: localStorage.getItem("enable_awb_download") === "true",
+              saveFiles: saveFilesInfo
+            })
+          });
 
-        if (!printRes.ok) {
-          const printErrData = await printRes.json();
-          throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
+          if (!printRes.ok) {
+            const printErrData = await printRes.json();
+            throw new Error(printErrData.error || `Local print server returned HTTP ${printRes.status}`);
+          }
+        } else {
+          // Live production site: trigger browser downloads directly
+          const now = new Date();
+          const DD = String(now.getDate()).padStart(2, '0');
+          const MM = String(now.getMonth() + 1).padStart(2, '0');
+          const YYYY = now.getFullYear();
+          const hh = String(now.getHours()).padStart(2, '0');
+          const mm = String(now.getMinutes()).padStart(2, '0');
+          
+          const filename = `${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
+          
+          // Download combined AWB PDF to browser (triggers PowerShell watcher)
+          triggerBlobDownload(blob, filename);
+
+          // Download individual single AWB PDFs if save is enabled
+          if (localStorage.getItem("enable_awb_download") === "true") {
+            for (const file of saveFilesInfo) {
+              try {
+                let fileBlob: Blob;
+                if (file.pdfUrl) {
+                  const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+                  const fileRes = await fetch(proxyUrl);
+                  fileBlob = await fileRes.blob();
+                } else {
+                  continue;
+                }
+                triggerBlobDownload(fileBlob, `${file.orderId}.pdf`);
+              } catch (err) {
+                console.error(`Failed to download single AWB for order ${file.orderId}:`, err);
+              }
+            }
+          }
         }
 
         // Log print status to backend for all orders in batch

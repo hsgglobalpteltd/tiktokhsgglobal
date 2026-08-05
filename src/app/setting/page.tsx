@@ -75,14 +75,86 @@ export default function SettingPage() {
   const [awbDownloadPath, setAwbDownloadPath] = React.useState("");
   const [awbPrintScale, setAwbPrintScale] = React.useState("100");
   const [isPrintTerminal, setIsPrintTerminal] = React.useState(false);
+  const [sumatraPath, setSumatraPath] = React.useState("C:\\Users\\User\\AppData\\Local\\SumatraPDF\\SumatraPDF.exe");
+  const [printDelaySeconds, setPrintDelaySeconds] = React.useState("2");
+  const [printRetentionCount, setPrintRetentionCount] = React.useState("10");
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       setAwbDownloadPath(localStorage.getItem("awb_download_path") || "");
       setAwbPrintScale(localStorage.getItem("awb_print_scale") || "100");
+      setSumatraPath(localStorage.getItem("sumatra_path") || "C:\\Users\\User\\AppData\\Local\\SumatraPDF\\SumatraPDF.exe");
+      setPrintDelaySeconds(localStorage.getItem("print_delay_seconds") || "2");
+      setPrintRetentionCount(localStorage.getItem("print_retention_count") || "10");
       setIsPrintTerminal(sessionStorage.getItem("terminal_auto_print") === "true");
     }
   }, []);
+
+  const generatePS1 = () => {
+    const watch = awbDownloadPath.trim() ? `${awbDownloadPath.trim()}\\0000 AWB Print Log` : "C:\\Users\\User\\Desktop\\Test\\0000 AWB Print Log";
+    const sumatra = sumatraPath.trim();
+    const count = printRetentionCount;
+    const delay = printDelaySeconds;
+
+    return `$WatchFolder = "${watch}"
+$SumatraPath = "${sumatra}"
+$LogFile = "$WatchFolder\\print_log.txt"
+$KeepCount = ${count}
+
+if (!(Test-Path $WatchFolder)) { New-Item -ItemType Directory -Path $WatchFolder }
+if (!(Test-Path $LogFile)) { New-Item -ItemType File -Path $LogFile }
+
+Write-Host "--- Print Agent Active ---" -ForegroundColor Emerald
+
+while ($true) {
+    # 1. Detect and Print
+    $files = Get-ChildItem -Path $WatchFolder -Filter "*.pdf" | Sort-Object LastWriteTime -Descending
+    foreach ($file in $files) {
+        $fileName = $file.Name
+        $logged = Get-Content -Path $LogFile | Select-String -Pattern [regex]::Escape($fileName) -SimpleMatch
+        
+        if ($logged) { continue }
+
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Printing: $fileName" -ForegroundColor Cyan
+        $args = "-print-to-default -silent -exit-on-print \`"$($file.FullName)\`""
+        Start-Process -FilePath $SumatraPath -ArgumentList $args -WindowStyle Hidden
+        
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        "[$timestamp] Printed: $fileName" | Add-Content -Path $LogFile
+    }
+
+    # 2. Smart Cleanup
+    $currentPDFs = Get-ChildItem -Path $WatchFolder -Filter "*.pdf" | Sort-Object LastWriteTime -Descending
+    if ($currentPDFs.Count -gt $KeepCount) {
+        $toDelete = $currentPDFs | Select-Object -Skip $KeepCount
+        foreach ($oldFile in $toDelete) {
+            Remove-Item -Path $oldFile.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Start-Sleep -Seconds ${delay}
+}`;
+  };
+
+  const downloadFile = (filename: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+  };
+
+  const downloadPackage = () => {
+    downloadFile('sumatra-agent.ps1', generatePS1());
+    setTimeout(() => {
+      const bat = `@echo off\ntitle Print Agent Active\necho Starting AWB Agent...\npowershell -ExecutionPolicy Bypass -File "%~dp0sumatra-agent.ps1"\npause`;
+      downloadFile('run-agent.bat', bat);
+    }, 500);
+  };
 
   // Load initial cooldown if any
   React.useEffect(() => {
@@ -104,6 +176,8 @@ export default function SettingPage() {
     }, 1000);
     return () => clearTimeout(t);
   }, [cooldownSeconds]);
+
+
 
   const handleHistoricalSyncBlock = async () => {
     if (!histShopId) {
@@ -738,11 +812,11 @@ export default function SettingPage() {
             </div>
           </div>
 
-          {/* AWB File Download Configuration Section */}
+          {/* AWB Print & Download Configuration Section */}
           {isPrintTerminal && (
             <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
               <div className="section-header">
-                <h2 className="section-title">AWB PDF File Download Settings</h2>
+                <h2 className="section-title">AWB PDF Print & Download Settings</h2>
                 <button
                   type="button"
                   onClick={() => {
@@ -750,14 +824,12 @@ export default function SettingPage() {
                       showToast("Error: Local Save Directory Path is mandatory!");
                       return;
                     }
-                    const scaleNum = Number(awbPrintScale);
-                    if (isNaN(scaleNum) || scaleNum < 10 || scaleNum > 100) {
-                      showToast("Error: Print Scale must be a number between 10 and 100!");
-                      return;
-                    }
                     localStorage.setItem("awb_download_path", awbDownloadPath.trim());
                     localStorage.setItem("enable_awb_download", "true");
-                    localStorage.setItem("awb_print_scale", String(scaleNum));
+                    localStorage.setItem("awb_print_scale", awbPrintScale);
+                    localStorage.setItem("sumatra_path", sumatraPath.trim());
+                    localStorage.setItem("print_delay_seconds", printDelaySeconds);
+                    localStorage.setItem("print_retention_count", printRetentionCount);
                     showToast("AWB settings saved successfully.");
                   }}
                   className="btn-primary"
@@ -768,44 +840,127 @@ export default function SettingPage() {
               </div>
               <div className="flex flex-col gap-2.5">
                 <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
-                  Automatically save downloaded AWB PDF documents to a specified local directory. Files will be organized separately by Shop name and month.
+                  Configure the local directory used by the system to print and archive AWB PDF files.
                 </p>
                 
-                <div className="flex flex-col gap-1 mt-2">
-                  <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
-                    Local Save Directory Path <span style={{ color: "#D93025" }}>* (Required)</span>
-                  </label>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", maxWidth: "450px" }}>
+                {/* Save Directory & Scale */}
+                <div style={{ display: "flex", gap: "16px", maxWidth: "650px", width: "100%", marginTop: "8px" }}>
+                  <div style={{ flex: 7, display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
+                      Local Save Directory Path <span style={{ color: "#D93025" }}>*</span>
+                    </label>
                     <input
                       type="text"
                       value={awbDownloadPath}
                       onChange={(e) => setAwbDownloadPath(e.target.value)}
                       placeholder="e.g. C:\Users\User\Downloads\AWB"
                       className="form-input"
-                      style={{ flex: 1, height: "36px" }}
+                      style={{ width: "100%", height: "36px" }}
                     />
+                    <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
+                      Print Log: <code>{"{Save Path}\\0000 AWB Print Log"}</code> | Archive: <code>{"{Save Path}\\{Shop Name}\\{MMYYYY}\\{Order ID}.pdf"}</code>
+                    </span>
                   </div>
-                  <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
-                    Example format: <code>{"{Save Path}\\{Shop Name}\\{YYYY-MM}\\{Order ID}.pdf"}</code>
-                  </span>
+
+                  <div style={{ flex: 3, display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
+                      Print Scale (%) <span style={{ color: "#D93025" }}>*</span>
+                    </label>
+                    <input
+                      type="number"
+                      value={awbPrintScale}
+                      onChange={(e) => setAwbPrintScale(e.target.value)}
+                      placeholder="100"
+                      min="10"
+                      max="200"
+                      className="form-input"
+                      style={{ width: "100%", height: "36px" }}
+                    />
+                    <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
+                      AWB print scaling factor (default: 100).
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-1 mt-3">
-                  <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
-                    AWB Print Scale (%) <span style={{ color: "#D93025" }}>* (Required)</span>
-                  </label>
-                  <input
-                    type="number"
-                    value={awbPrintScale}
-                    onChange={(e) => setAwbPrintScale(e.target.value)}
-                    min="10"
-                    max="100"
-                    className="form-input"
-                    style={{ width: "100px", height: "36px", textAlign: "center" }}
-                  />
-                  <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
-                    Specifies custom scaling percentage (anchored top-left). Default is 100 for normal A6 fit.
-                  </span>
+                {/* Sumatra PDF Path, Delay Time, and Keep Files Settings (60% / 20% / 20%) */}
+                <div style={{ display: "flex", gap: "16px", maxWidth: "650px", width: "100%", marginTop: "12px" }}>
+                  <div style={{ flex: 6, display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
+                      SumatraPDF.exe Path <span style={{ color: "#D93025" }}>*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={sumatraPath}
+                      onChange={(e) => setSumatraPath(e.target.value)}
+                      placeholder="e.g. C:\Users\User\AppData\Local\SumatraPDF\SumatraPDF.exe"
+                      className="form-input"
+                      style={{ width: "100%", height: "36px" }}
+                    />
+                    <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
+                      Absolute path to executable.
+                    </span>
+                  </div>
+
+                  <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
+                      Delay (Sec) <span style={{ color: "#D93025" }}>*</span>
+                    </label>
+                    <input
+                      type="number"
+                      value={printDelaySeconds}
+                      onChange={(e) => setPrintDelaySeconds(e.target.value)}
+                      placeholder="2"
+                      min="1"
+                      max="60"
+                      className="form-input"
+                      style={{ width: "100%", height: "36px" }}
+                    />
+                    <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
+                      Check interval.
+                    </span>
+                  </div>
+
+                  <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <label className="form-label" style={{ fontWeight: 600, fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
+                      Keep Files <span style={{ color: "#D93025" }}>*</span>
+                    </label>
+                    <input
+                      type="number"
+                      value={printRetentionCount}
+                      onChange={(e) => setPrintRetentionCount(e.target.value)}
+                      placeholder="10"
+                      min="1"
+                      max="100"
+                      className="form-input"
+                      style={{ width: "100%", height: "36px" }}
+                    />
+                    <span className="helper-note" style={{ margin: 0, fontSize: "10px", color: "#80868B" }}>
+                      Retention.
+                    </span>
+                  </div>
+                </div>
+
+                {/* Download Button */}
+                <div style={{ marginTop: "16px", maxWidth: "650px", width: "100%" }}>
+                  <button
+                    type="button"
+                    onClick={downloadPackage}
+                    className="btn-primary"
+                    style={{
+                      width: "100%",
+                      height: "44px",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "2px"
+                    }}
+                  >
+                    <span style={{ fontSize: "13px", fontWeight: 600 }}>Download Agent Package</span>
+                    <span style={{ fontSize: "9px", opacity: 0.8, fontWeight: 400, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                      sumatra-agent.ps1 + run-agent.bat
+                    </span>
+                  </button>
                 </div>
 
               </div>
