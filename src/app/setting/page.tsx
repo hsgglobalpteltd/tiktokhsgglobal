@@ -80,7 +80,7 @@ export default function SettingPage() {
     if (typeof window !== "undefined") {
       setAwbDownloadPath(localStorage.getItem("awb_download_path") || "");
       setAwbPrintScale(localStorage.getItem("awb_print_scale") || "100");
-      setIsPrintTerminal(sessionStorage.getItem("terminal_auto_print") === "true");
+      setIsPrintTerminal(localStorage.getItem("terminal_auto_print") === "true");
     }
   }, []);
 

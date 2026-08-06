@@ -17,7 +17,7 @@ export default function Home() {
   React.useEffect(() => {
     setMounted(true);
     try {
-      const cached = sessionStorage.getItem("terminal_allowed_pages");
+      const cached = localStorage.getItem("terminal_allowed_pages");
       if (cached) {
         setAllowedPages(JSON.parse(cached));
       }
@@ -25,10 +25,10 @@ export default function Home() {
   }, []);
 
   const handleLogout = () => {
-    sessionStorage.removeItem("terminal_auth");
-    sessionStorage.removeItem("terminal_allowed_pages");
-    sessionStorage.removeItem("terminal_name");
-    sessionStorage.removeItem("terminal_ip");
+    localStorage.removeItem("terminal_auth");
+    localStorage.removeItem("terminal_allowed_pages");
+    localStorage.removeItem("terminal_name");
+    localStorage.removeItem("terminal_ip");
     window.location.reload();
   };
 

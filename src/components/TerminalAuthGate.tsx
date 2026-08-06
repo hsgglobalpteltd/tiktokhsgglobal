@@ -195,12 +195,12 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         setTerminalPin(data.pin || "");
         setAutoPrintEnabled(!!data.autoPrint);
 
-        sessionStorage.setItem("terminal_name", data.name || "");
-        sessionStorage.setItem("terminal_allowed_pages", JSON.stringify(data.allowedPages || []));
-        sessionStorage.setItem("terminal_ip", data.ip || "");
-        sessionStorage.setItem("terminal_auto_print", String(!!data.autoPrint));
+        localStorage.setItem("terminal_name", data.name || "");
+        localStorage.setItem("terminal_allowed_pages", JSON.stringify(data.allowedPages || []));
+        localStorage.setItem("terminal_ip", data.ip || "");
+        localStorage.setItem("terminal_auto_print", String(!!data.autoPrint));
 
-        const isAuth = sessionStorage.getItem("terminal_auth") === "true";
+        const isAuth = localStorage.getItem("terminal_auth") === "true";
         if (isAuth) {
           setStatus("authenticated");
         } else {
@@ -863,10 +863,10 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
     if (newPin.length === 4) {
       if (newPin === terminalPin) {
-        sessionStorage.setItem("terminal_auth", "true");
-        sessionStorage.setItem("terminal_name", terminalName);
-        sessionStorage.setItem("terminal_allowed_pages", JSON.stringify(allowedPages));
-        sessionStorage.setItem("terminal_auto_print", String(autoPrintEnabled));
+        localStorage.setItem("terminal_auth", "true");
+        localStorage.setItem("terminal_name", terminalName);
+        localStorage.setItem("terminal_allowed_pages", JSON.stringify(allowedPages));
+        localStorage.setItem("terminal_auto_print", String(autoPrintEnabled));
         setStatus("authenticated");
       } else {
         setPinError(true);

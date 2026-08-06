@@ -116,9 +116,9 @@ export default function OrdersPage() {
   const [isPrintTerminal, setIsPrintTerminal] = React.useState(false);
   React.useEffect(() => {
     if (typeof window !== "undefined") {
-      const name = sessionStorage.getItem("terminal_name");
+      const name = localStorage.getItem("terminal_name");
       if (name) setTerminalName(name);
-      const isAutoPrint = sessionStorage.getItem("terminal_auto_print") === "true";
+      const isAutoPrint = localStorage.getItem("terminal_auto_print") === "true";
       setIsPrintTerminal(isAutoPrint);
     }
   }, []);

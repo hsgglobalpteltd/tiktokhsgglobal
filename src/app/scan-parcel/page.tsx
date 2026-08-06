@@ -86,7 +86,7 @@ export default function ScanPackPage() {
   const [terminalName, setTerminalName] = React.useState("PC Office");
   React.useEffect(() => {
     if (typeof window !== "undefined") {
-      const name = sessionStorage.getItem("terminal_name");
+      const name = localStorage.getItem("terminal_name");
       if (name) setTerminalName(name);
     }
   }, []);
