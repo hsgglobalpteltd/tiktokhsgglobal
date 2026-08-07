@@ -276,13 +276,30 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         
         const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
         
-        // Download combined AWB PDF to browser (triggers PowerShell watcher)
-        triggerBlobDownload(blob, filename);
+        // Upload print-pending combined/print AWB PDF directly to R2 bucket
+        try {
+          const pendingFilename = `TiktokAWBPrintPending/${filename}`;
+          const uploadPendingUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+          await fetch(uploadPendingUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: blob
+          }).then(res => {
+            if (res.ok) {
+              console.log(`Successfully uploaded print-pending AWB to R2: ${pendingFilename}`);
+            } else {
+              console.error(`Failed to upload print-pending AWB to R2: ${pendingFilename}. Status: ${res.status}`);
+            }
+          }).catch(err => {
+            console.error(`Failed to upload print-pending AWB to R2: ${pendingFilename}`, err);
+          });
+        } catch (uploadErr) {
+          console.error("Failed to upload print-pending AWB to R2:", uploadErr);
+        }
 
         // Upload individual original single AWB PDF (No Scale) directly to R2 bucket
         try {
-          const currentYearMonth = `${MM}${YYYY}`;
-          const r2Filename = `Tiktok AWB/Unknown Shop/${currentYearMonth}/${orderId}.pdf`;
+          const r2Filename = `Tiktok AWB/Unknown Shop/${orderId}.pdf`;
           const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
 
           fetch(uploadUrl, {
@@ -356,8 +373,26 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
         
         const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
         
-        // Download combined AWB PDF to browser (triggers PowerShell watcher)
-        triggerBlobDownload(blob, filename);
+        // Upload print-pending combined/print AWB PDF directly to R2 bucket
+        try {
+          const pendingFilename = `TiktokAWBPrintPending/${filename}`;
+          const uploadPendingUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+          await fetch(uploadPendingUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: blob
+          }).then(res => {
+            if (res.ok) {
+              console.log(`Successfully uploaded print-pending combined AWB to R2: ${pendingFilename}`);
+            } else {
+              console.error(`Failed to upload print-pending combined AWB to R2: ${pendingFilename}. Status: ${res.status}`);
+            }
+          }).catch(err => {
+            console.error(`Failed to upload print-pending combined AWB to R2: ${pendingFilename}`, err);
+          });
+        } catch (uploadErr) {
+          console.error("Failed to upload print-pending combined AWB to R2:", uploadErr);
+        }
 
         // Upload individual original single AWB PDFs (No Scale) directly to R2 bucket
         for (const file of saveFilesInfo) {
@@ -370,13 +405,8 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
             const fileData = await fileRes.arrayBuffer();
 
             const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
-            const createTime = Number(file.createTime) > 1e11 ? Number(file.createTime) : Number(file.createTime) * 1000;
-            const dateObj = new Date(createTime);
-            const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
-            const shopYYYY = dateObj.getFullYear();
-            const monthStr = `${shopMM}${shopYYYY}`;
 
-            const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${file.orderId}.pdf`;
+            const r2Filename = `Tiktok AWB/${cleanShopName}/${file.orderId}.pdf`;
             const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
 
             fetch(uploadUrl, {
@@ -423,11 +453,20 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
     }
     printingInProgress.current = true;
 
+    const runLogs: string[] = [];
+    const getHHMM = () => {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      return `${hh}${mm}`;
+    };
+
     try {
       // ----------------------------------------------------
       // PHASE 1: TikTok Auto-Sync (Using Manual Sync Endpoint & Param)
       // ----------------------------------------------------
       addLog("info", "Initial Auto Sync");
+      runLogs.push(`${getHHMM()} Initial Scyning Orders`);
 
       // 1. Fetch current cached orders from Supabase (without sync)
       let prevOrders: any[] = [];
@@ -461,11 +500,15 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       // 3. Compute and log changes
       const prevMap = new Map(prevOrders.map((o: any) => [o.id, o]));
       let hasChanges = false;
+      let newOrdersCount = 0;
+      let updatedOrdersCount = 0;
       for (const newOrd of currentOrdersList) {
         const prevOrd = prevMap.get(newOrd.id);
         if (!prevOrd) {
           addLog("success", `ID : ${newOrd.id} New Order`, true);
           hasChanges = true;
+          newOrdersCount++;
+          runLogs.push(`${newOrd.id} New`);
         } else {
           const prevStatus = prevOrd.actual_status || "";
           const newStatus = newOrd.actual_status || "";
@@ -474,6 +517,8 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           if (prevStatus !== newStatus || prevSysStatus !== newSysStatus) {
             addLog("success", `ID : ${newOrd.id} Status Update`, true);
             hasChanges = true;
+            updatedOrdersCount++;
+            runLogs.push(`${newOrd.id} Update`);
           }
         }
       }
@@ -483,11 +528,13 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       }
 
       addLog("success", "Auto Sync Complete Success");
+      runLogs.push(`Success ${updatedOrdersCount} Orders Updated & ${newOrdersCount} New Orders`);
 
       // ----------------------------------------------------
       // PHASE 2: Auto-Generate AWB
       // ----------------------------------------------------
       addLog("info", "Initial Auto Generate AWB");
+      runLogs.push(`${getHHMM()} Initial Generating AWB`);
 
       // Filter for orders that are "Unpacked" and not printed, and actual status is printable
       const getUnprintedOrdersList = (orders: any[]) => {
@@ -505,10 +552,12 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       let unprintedOrders = getUnprintedOrdersList(currentOrdersList);
       const ordersMissingAwb = unprintedOrders.filter((order: any) => !order.tracking_number || order.tracking_number === "N/A");
 
+      let generatedCount = 0;
       if (ordersMissingAwb.length > 0) {
         let generatedAny = false;
 
         for (const order of ordersMissingAwb) {
+          runLogs.push(`${order.id} Generating..`);
           try {
             const awbRes = await fetch(`${WORKER_URL}/api/tiktok/orders/create-awb`, {
               method: "POST",
@@ -520,6 +569,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
               if (awbData.success) {
                 addLog("success", `ID : ${order.id} AWB Generated`, true);
                 generatedAny = true;
+                generatedCount++;
               } else {
                 addLog("error", `ID : ${order.id} AWB Generation Failed: ${awbData.error || "Unknown error"}`, true);
               }
@@ -553,20 +603,24 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       }
 
       addLog("success", "Auto Generate AWB Complete Success");
+      runLogs.push(`Success ${generatedCount} AWB Generated`);
 
       // ----------------------------------------------------
       // PHASE 3: AWB Download & Print
       // ----------------------------------------------------
       addLog("info", "Initial Auto Print AWB");
+      runLogs.push(`${getHHMM()} Initial Fetching AWB`);
 
       // Only print orders that now have tracking numbers
       const ordersToPrint = unprintedOrders.filter((order: any) => order.tracking_number && order.tracking_number !== "N/A");
 
+      let fetchedCount = 0;
       if (ordersToPrint.length > 0) {
         const printedOrderIds: any[] = [];
         const pdfUrls = [];
 
         for (const order of ordersToPrint) {
+          runLogs.push(`${order.id} Feching..`);
           try {
             const printRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}&skip_log=true`);
             if (printRes.ok) {
@@ -576,6 +630,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
                 order.doc_url = printData.doc_url;
                 printedOrderIds.push(order);
                 addLog("success", `ID : ${order.id} AWB Printed`, true);
+                fetchedCount++;
               } else {
                 addLog("error", `ID : ${order.id} Print Document Retrieval Failed: ${printData.error || "No URL returned"}`, true);
               }
@@ -596,6 +651,8 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
             }
           }
         }
+
+        runLogs.push(`Success ${fetchedCount} AWB Fetched`);
 
         if (pdfUrls.length > 0) {
           // Download and merge PDFs
@@ -637,18 +694,56 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
 
           await printMergedPdfs(mergedBlobUrl, printedOrderIds);
           URL.revokeObjectURL(mergedBlobUrl);
+
+          runLogs.push("The Individual AWB uploaded to TikTok AWB");
+          runLogs.push("The Combined AWB uploaded to TikTok AWB Print Pending");
         }
       } else {
         addLog("info", "no new order to print", true);
+        runLogs.push(`Success 0 AWB Fetched`);
       }
 
       addLog("success", "Auto Print AWB Complete Success");
+      runLogs.push(`${getHHMM()} All Task Complete`);
+      runLogs.push(`Exit`);
+
+      // Upload WorkingLog.txt to R2
+      const logText = runLogs.join("\n");
+      const uploadLogUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent("TiktokAWBPrintPending/WorkingLog.txt")}`;
+      await fetch(uploadLogUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: logText
+      }).then(res => {
+        if (res.ok) {
+          console.log("Successfully uploaded WorkingLog.txt to R2");
+        } else {
+          console.error("Failed to upload WorkingLog.txt to R2. Status:", res.status);
+        }
+      }).catch(err => {
+        console.error("Failed to upload WorkingLog.txt to R2:", err);
+      });
 
       // Dispatch global refresh event to refresh screen tables
       window.dispatchEvent(new CustomEvent("db-refresh"));
 
     } catch (err: any) {
       addLog("error", `Auto Sync/Print pipeline failed: ${err.message || err}`);
+      runLogs.push(`Error: ${err.message || err}`);
+      runLogs.push(`${getHHMM()} All Task Complete`);
+      runLogs.push(`Exit`);
+      
+      const logText = runLogs.join("\n");
+      const uploadLogUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent("TiktokAWBPrintPending/WorkingLog.txt")}`;
+      try {
+        await fetch(uploadLogUrl, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: logText
+        });
+      } catch (uploadErr) {
+        console.error("Failed to upload error WorkingLog.txt:", uploadErr);
+      }
     } finally {
       printingInProgress.current = false;
     }

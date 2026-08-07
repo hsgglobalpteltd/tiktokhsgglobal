@@ -130,7 +130,9 @@ export default function OrdersPage() {
   const [selectedShopId, setSelectedShopId] = React.useState<string>("all");
   const [selectedTab, setSelectedTab] = React.useState<string>("all");
   const [searchQuery, setSearchQuery] = React.useState("");
+  const [isSearchExpanded, setIsSearchExpanded] = React.useState(false);
   const [sortBy, setSortBy] = React.useState<"newest" | "oldest">("newest");
+  const [isRefreshHovered, setIsRefreshHovered] = React.useState(false);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
   const [selectedOrderItems, setSelectedOrderItems] = React.useState<Order | null>(null);
   const [awbLoadingOrderId, setAwbLoadingOrderId] = React.useState<string | null>(null);
@@ -139,6 +141,8 @@ export default function OrdersPage() {
   const [selectedOrderIds, setSelectedOrderIds] = React.useState<Set<string>>(new Set());
   const [isBulkPrinting, setIsBulkPrinting] = React.useState(false);
   const [bulkPrintProgress, setBulkPrintProgress] = React.useState<string>("");
+  const [isBulkDownloading, setIsBulkDownloading] = React.useState(false);
+  const [bulkDownloadProgress, setBulkDownloadProgress] = React.useState<string>("");
 
   // Confirmation popup state
   const [printConfirmData, setPrintConfirmData] = React.useState<{
@@ -476,19 +480,32 @@ export default function OrdersPage() {
         
         const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
         
-        // Download scaled AWB PDF to browser (triggers PowerShell watcher to print scaled)
-        triggerBlobDownload(blob, filename);
+        // Upload print-pending combined/print AWB PDF directly to R2 bucket
+        try {
+          const pendingFilename = `TiktokAWBPrintPending/${filename}`;
+          const uploadPendingUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+          await fetch(uploadPendingUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: blob
+          }).then(res => {
+            if (res.ok) {
+              console.log(`Successfully uploaded print-pending AWB to R2: ${pendingFilename}`);
+            } else {
+              console.error(`Failed to upload print-pending AWB to R2: ${pendingFilename}. Status: ${res.status}`);
+            }
+          }).catch(err => {
+            console.error(`Failed to upload print-pending AWB to R2: ${pendingFilename}`, err);
+          });
+        } catch (uploadErr) {
+          console.error("Failed to upload print-pending AWB to R2:", uploadErr);
+        }
 
         // Upload individual original single AWB PDF (No Scale) directly to R2 bucket
         if (order) {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
-          const createTime = Number(order.create_time) > 1e11 ? Number(order.create_time) : Number(order.create_time) * 1000;
-          const dateObj = new Date(createTime);
-          const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
-          const shopYYYY = dateObj.getFullYear();
-          const monthStr = `${shopMM}${shopYYYY}`;
           
-          const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${order.id}.pdf`;
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${order.id}.pdf`;
           const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
           
           fetch(uploadUrl, {
@@ -539,26 +556,40 @@ export default function OrdersPage() {
         if (!order) continue;
 
         try {
-          const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
-            method: "GET"
-          });
-
-          if (!res.ok) {
-            const errorData = await res.json() as any;
-            throw new Error(errorData.error || `HTTP error! status: ${res.status}`);
-          }
-
-          const data = await res.json() as any;
-          if (data.success && data.doc_url) {
-            docUrls.push(data.doc_url);
+          const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
+          if (order.awb_printed) {
+            const r2Url = `https://ib.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
+            docUrls.push(r2Url);
             saveFilesInfo.push({
-              pdfUrl: data.doc_url,
+              pdfUrl: r2Url,
               shopName: order.shop_name || "Unknown Shop",
               orderId: order.id,
-              createTime: order.create_time
+              createTime: order.create_time,
+              alreadyInR2: true
             });
           } else {
-            throw new Error(data.error || "No document URL returned");
+            const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
+              method: "GET"
+            });
+
+            if (!res.ok) {
+              const errorData = await res.json() as any;
+              throw new Error(errorData.error || `HTTP error! status: ${res.status}`);
+            }
+
+            const data = await res.json() as any;
+            if (data.success && data.doc_url) {
+              docUrls.push(data.doc_url);
+              saveFilesInfo.push({
+                pdfUrl: data.doc_url,
+                shopName: order.shop_name || "Unknown Shop",
+                orderId: order.id,
+                createTime: order.create_time,
+                alreadyInR2: false
+              });
+            } else {
+              throw new Error(data.error || "No document URL returned");
+            }
           }
         } catch (err: any) {
           console.error(`Error fetching AWB for order ${orderId}:`, err);
@@ -579,15 +610,24 @@ export default function OrdersPage() {
 
       for (const docUrl of docUrls) {
         try {
-          const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
-          const pdfRes = await fetch(proxyUrl);
-          if (!pdfRes.ok) {
-            throw new Error(`Failed to download PDF from proxy: ${pdfRes.status}`);
-          }
-          const pdfBytes = await pdfRes.arrayBuffer();
-          
-          // Match and store pdfBytes in saveFilesInfo for R2 upload
           const matchedFile = saveFilesInfo.find(file => file.pdfUrl === docUrl);
+          let pdfBytes: ArrayBuffer;
+
+          if (matchedFile && matchedFile.alreadyInR2) {
+            const pdfRes = await fetch(docUrl);
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from R2: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          } else {
+            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
+            const pdfRes = await fetch(proxyUrl);
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from proxy: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          }
+          
           if (matchedFile) {
             matchedFile.pdfBytes = pdfBytes;
           }
@@ -653,12 +693,32 @@ export default function OrdersPage() {
       
       const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
       
-      // Download combined AWB PDF to browser (triggers PowerShell watcher)
-      triggerBlobDownload(blob, filename);
+      // Upload print-pending combined/print AWB PDF directly to R2 bucket
+      try {
+        const pendingFilename = `TiktokAWBPrintPending/${filename}`;
+        const uploadPendingUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+        await fetch(uploadPendingUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/pdf" },
+          body: blob
+        }).then(res => {
+          if (res.ok) {
+            console.log(`Successfully uploaded print-pending combined AWB to R2: ${pendingFilename}`);
+          } else {
+            console.error(`Failed to upload print-pending combined AWB to R2: ${pendingFilename}. Status: ${res.status}`);
+          }
+        }).catch(err => {
+          console.error(`Failed to upload print-pending combined AWB to R2: ${pendingFilename}`, err);
+        });
+      } catch (uploadErr) {
+        console.error("Failed to upload print-pending combined AWB to R2:", uploadErr);
+      }
 
       // Upload individual original single AWB PDFs (No Scale) directly to R2 bucket
       for (const file of saveFilesInfo) {
         try {
+          if (file.alreadyInR2) continue; // Skip uploading if it is already in R2!
+
           let fileData: ArrayBuffer;
           if (file.pdfBytes) {
             fileData = file.pdfBytes;
@@ -671,13 +731,8 @@ export default function OrdersPage() {
           }
 
           const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
-          const createTime = Number(file.createTime) > 1e11 ? Number(file.createTime) : Number(file.createTime) * 1000;
-          const dateObj = new Date(createTime);
-          const shopMM = String(dateObj.getMonth() + 1).padStart(2, '0');
-          const shopYYYY = dateObj.getFullYear();
-          const monthStr = `${shopMM}${shopYYYY}`;
           
-          const r2Filename = `Tiktok AWB/${cleanShopName}/${monthStr}/${file.orderId}.pdf`;
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${file.orderId}.pdf`;
           const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
           
           fetch(uploadUrl, {
@@ -735,6 +790,173 @@ export default function OrdersPage() {
       });
     } else {
       handleBulkPrint(selectedIdsArray);
+    }
+  };
+
+  const handleBulkDownload = async () => {
+    const idsToDownload = Array.from(selectedOrderIds);
+    if (idsToDownload.length === 0 || isBulkDownloading) return;
+    setIsBulkDownloading(true);
+    setBulkDownloadProgress("Preparing...");
+
+    const docUrls: string[] = [];
+    const failedOrders: string[] = [];
+    const saveFilesInfo: any[] = [];
+
+    try {
+      let count = 0;
+      for (const orderId of idsToDownload) {
+        count++;
+        setBulkDownloadProgress(`Fetching ${count}/${idsToDownload.length}...`);
+        const order = orders.find(o => o.id === orderId);
+        if (!order) continue;
+
+        try {
+          const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
+          if (order.awb_printed) {
+            const r2Url = `https://ib.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
+            docUrls.push(r2Url);
+            saveFilesInfo.push({
+              pdfUrl: r2Url,
+              shopName: order.shop_name || "Unknown Shop",
+              orderId: order.id,
+              createTime: order.create_time,
+              alreadyInR2: true
+            });
+          } else {
+            const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
+              method: "GET"
+            });
+
+            if (!res.ok) {
+              const errorData = await res.json() as any;
+              throw new Error(errorData.error || `HTTP error! status: ${res.status}`);
+            }
+
+            const data = await res.json() as any;
+            if (data.success && data.doc_url) {
+              docUrls.push(data.doc_url);
+              saveFilesInfo.push({
+                pdfUrl: data.doc_url,
+                shopName: order.shop_name || "Unknown Shop",
+                orderId: order.id,
+                createTime: order.create_time,
+                alreadyInR2: false
+              });
+            } else {
+              throw new Error(data.error || "No document URL returned");
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error fetching AWB for order ${orderId}:`, err);
+          failedOrders.push(orderId);
+        }
+      }
+
+      if (docUrls.length === 0) {
+        throw new Error("Failed to retrieve AWB URLs for all selected orders.");
+      }
+
+      setBulkDownloadProgress("Merging PDFs...");
+      const mergedPdf = await PDFDocument.create();
+      let mergedPageCount = 0;
+
+      for (const docUrl of docUrls) {
+        try {
+          const matchedFile = saveFilesInfo.find(file => file.pdfUrl === docUrl);
+          let pdfBytes: ArrayBuffer;
+
+          if (matchedFile && matchedFile.alreadyInR2) {
+            const pdfRes = await fetch(docUrl);
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from R2: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          } else {
+            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
+            const pdfRes = await fetch(proxyUrl);
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from proxy: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          }
+          
+          if (matchedFile) {
+            matchedFile.pdfBytes = pdfBytes;
+          }
+
+          const pdf = await PDFDocument.load(pdfBytes);
+          const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+          copiedPages.forEach((page) => {
+            mergedPdf.addPage(page);
+            mergedPageCount++;
+          });
+        } catch (err) {
+          console.error(`Failed to merge PDF from URL ${docUrl}:`, err);
+        }
+      }
+
+      if (mergedPageCount === 0) {
+        throw new Error("No PDF pages could be successfully merged.");
+      }
+
+      setBulkDownloadProgress("Finalizing...");
+      const mergedPdfBytes = await mergedPdf.save();
+      const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
+
+      // Open combined PDF as Blob URL in a new blank tab
+      const downloadUrl = window.URL.createObjectURL(blob);
+      window.open(downloadUrl, "_blank");
+
+      // Upload individual original single AWB PDFs (No Scale) directly to R2 bucket
+      for (const file of saveFilesInfo) {
+        try {
+          if (file.alreadyInR2) continue; // Skip uploading if it is already in R2!
+
+          let fileData: ArrayBuffer;
+          if (file.pdfBytes) {
+            fileData = file.pdfBytes;
+          } else if (file.pdfUrl) {
+            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const fileRes = await fetch(proxyUrl);
+            fileData = await fileRes.arrayBuffer();
+          } else {
+            continue;
+          }
+
+          const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${file.orderId}.pdf`;
+          const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          
+          fetch(uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: fileData
+          }).then(uploadRes => {
+            if (uploadRes.ok) {
+              console.log(`Successfully uploaded bulk single AWB to R2: ${r2Filename}`);
+            }
+          });
+        } catch (err) {
+          console.error(`Failed to process/upload single AWB for order ${file.orderId} to R2:`, err);
+        }
+      }
+
+      showToast("AWBs merged and opened successfully!");
+
+      const printedSet = new Set(idsToDownload.filter(id => !failedOrders.includes(id)));
+      setOrders(prev => prev.map(o => printedSet.has(o.id) ? { ...o, awb_printed: true } : o));
+      setSelectedOrderIds(new Set());
+
+      if (failedOrders.length > 0) {
+        showToast(`Merged successfully. Failed orders: ${failedOrders.join(", ")}`);
+      }
+    } catch (err: any) {
+      console.error("Bulk download error:", err);
+      showToast(`Error: ${err.message || "Failed to merge and download AWBs"}`);
+    } finally {
+      setIsBulkDownloading(false);
+      setBulkDownloadProgress("");
     }
   };
 
@@ -1042,14 +1264,60 @@ export default function OrdersPage() {
 
             {/* Search, Filter Toggle & Refresh Actions */}
             <div className="flex items-center gap-3">
-              <div className="relative">
+              <div 
+                className="relative flex items-center transition-all duration-300 ease-in-out"
+                onMouseEnter={() => setIsSearchExpanded(true)}
+                onMouseLeave={() => {
+                  if (!searchQuery) setIsSearchExpanded(false);
+                }}
+                style={{
+                  width: isSearchExpanded || searchQuery ? "256px" : "32px",
+                  height: "32px"
+                }}
+              >
                 <input
                   type="text"
-                  placeholder="Search order ID, SKU, customer..."
+                  placeholder={isSearchExpanded || searchQuery ? "Search order ID, SKU, customer..." : ""}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full md:w-64 border border-[#E0E2E6] rounded-full px-4 py-1.5 text-xs text-[#1F1F1F] placeholder-[#5F6368] bg-[#FCFDFE] focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
+                  onFocus={() => setIsSearchExpanded(true)}
+                  onBlur={() => {
+                    if (!searchQuery) setIsSearchExpanded(false);
+                  }}
+                  className="w-full h-full border border-[#E0E2E6] rounded-full pl-9 pr-4 text-xs text-[#1F1F1F] placeholder-[#5F6368] bg-[#FCFDFE] focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-all duration-300 ease-in-out"
+                  style={{
+                    opacity: isSearchExpanded || searchQuery ? 1 : 0,
+                    pointerEvents: isSearchExpanded || searchQuery ? "auto" : "none"
+                  }}
                 />
+                
+                <button
+                  type="button"
+                  onClick={() => setIsSearchExpanded(true)}
+                  className="absolute left-0 top-0 w-8 h-8 rounded-full border border-[#E0E2E6] flex items-center justify-center bg-[#FCFDFE] text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#1F1F1F] transition-all duration-300 ease-in-out outline-none cursor-pointer"
+                  style={{
+                    pointerEvents: isSearchExpanded || searchQuery ? "none" : "auto",
+                    opacity: isSearchExpanded || searchQuery ? 0 : 1,
+                    borderWidth: isSearchExpanded || searchQuery ? "0px" : "1px"
+                  }}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </button>
+
+                {(isSearchExpanded || searchQuery) && (
+                  <svg 
+                    className="w-3.5 h-3.5 absolute left-3.5 text-[#5F6368] transition-opacity duration-300" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="2" 
+                    viewBox="0 0 24 24" 
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                )}
               </div>
 
               {/* Filters Toggle Button */}
@@ -1071,6 +1339,42 @@ export default function OrdersPage() {
                   <span className="w-1.5 h-1.5 rounded-full bg-[#0B57D0]" />
                 )}
               </button>
+
+              {/* Bulk Download Button */}
+              {selectedOrderIds.size > 0 && (
+                <button
+                  onClick={handleBulkDownload}
+                  disabled={isBulkDownloading}
+                  className="btn-primary"
+                  style={{
+                    padding: "8px 16px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    height: "32px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    backgroundColor: "#1A73E8"
+                  }}
+                >
+                  {isBulkDownloading ? (
+                    <>
+                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                      </svg>
+                      {bulkDownloadProgress}
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                      </svg>
+                      Download AWB ({selectedOrderIds.size})
+                    </>
+                  )}
+                </button>
+              )}
 
               {/* Bulk Print Button */}
               {isPrintTerminal && selectedOrderIds.size > 0 && (
@@ -1112,31 +1416,49 @@ export default function OrdersPage() {
               <button
                 onClick={handleRefreshClick}
                 disabled={isLoading || isSyncing}
-                className="btn-primary"
+                onMouseEnter={() => setIsRefreshHovered(true)}
+                onMouseLeave={() => setIsRefreshHovered(false)}
+                className="btn-primary flex items-center justify-center rounded-full overflow-hidden"
                 style={{
-                  padding: "8px 16px",
+                  height: "32px",
+                  padding: isRefreshHovered || isSyncing ? "8px 16px" : "8px",
+                  width: isSyncing ? "120px" : (isRefreshHovered ? "135px" : "32px"),
                   fontSize: "12px",
                   fontWeight: "600",
-                  height: "32px",
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px"
+                  justifyContent: "center",
+                  gap: (isRefreshHovered || isSyncing) ? "6px" : "0px",
+                  minWidth: isSyncing ? "120px" : (isRefreshHovered ? "135px" : "32px"),
+                  backgroundColor: "#0B57D0",
+                  whiteSpace: "nowrap",
+                  transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
                 }}
+                title="Refresh Orders"
               >
                 {isSyncing ? (
                   <>
-                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <svg className="w-3.5 h-3.5 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                     </svg>
-                    Refreshing...
+                    <span className="whitespace-nowrap opacity-100">Refreshing...</span>
                   </>
                 ) : (
                   <>
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
                     </svg>
-                    Refresh Orders
+                    <span 
+                      className="whitespace-nowrap transition-all duration-300 ease-in-out"
+                      style={{
+                        opacity: isRefreshHovered ? 1 : 0,
+                        maxWidth: isRefreshHovered ? "100px" : "0px",
+                        overflow: "hidden"
+                      }}
+                    >
+                      Refresh Orders
+                    </span>
                   </>
                 )}
               </button>
@@ -1356,9 +1678,33 @@ export default function OrdersPage() {
                           {/* Tracking */}
                           <td className="p-3 align-top">
                             <div className="flex flex-col gap-0.5">
-                              <span className="font-medium text-[#1F1F1F] truncate block max-w-[160px]" title={order.shipping_provider || "N/A"}>
-                                {order.shipping_provider || "N/A"}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                {order.awb_printed ? (
+                                  <a
+                                    href={`https://ib.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent((order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim())}/${encodeURIComponent(order.id)}.pdf`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title="View / Download AWB from Secure Storage"
+                                    className="w-5 h-5 rounded-full bg-[#E8F0FE] hover:bg-[#D2E3FC] text-[#0B57D0] flex items-center justify-center transition duration-150 cursor-pointer outline-none border-none shadow-sm flex-shrink-0"
+                                  >
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                    </svg>
+                                  </a>
+                                ) : (
+                                  <div
+                                    title="AWB not yet in Secure Storage"
+                                    className="w-5 h-5 rounded-full bg-[#F1F3F4] text-[#9AA0A6] flex items-center justify-center cursor-not-allowed select-none flex-shrink-0 border border-gray-200"
+                                  >
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                    </svg>
+                                  </div>
+                                )}
+                                <span className="font-medium text-[#1F1F1F] truncate block max-w-[130px]" title={order.shipping_provider || "N/A"}>
+                                  {order.shipping_provider || "N/A"}
+                                </span>
+                              </div>
                               {order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "" ? (
                                 <div className="flex items-center gap-1.5">
                                   <span className="font-mono text-[#5F6368] text-[10px] truncate max-w-[120px]" title={order.tracking_number}>
