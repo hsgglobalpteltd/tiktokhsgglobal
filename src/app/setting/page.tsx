@@ -469,12 +469,17 @@ function Get-NextRunTime {
     }
     
     if ($test -le $now) {
-        $test = $test.AddHours(1)
+        switch ($IntervalVal) {
+            "5M" { $test = $test.AddMinutes(5) }
+            "30M" { $test = $test.AddMinutes(30) }
+            "1H" { $test = $test.AddHours(1) }
+            default { $test = $test.AddHours(1) }
+        }
     }
 
     # Helper to check if a day is in working days
     function Is-WorkingDay ($dateVal) {
-        $dayName = $dateVal.ToString("ddd")
+        $dayName = $dateVal.ToString("ddd", [System.Globalization.CultureInfo]::InvariantCulture)
         return $workingDays -contains $dayName
     }
 
@@ -483,7 +488,7 @@ function Get-NextRunTime {
         if ($IntervalVal -eq "6H" -or $IntervalVal -eq "12H") {
             return $true
         }
-        $timeStr = $dateVal.ToString("HH:mm")
+        $timeStr = $dateVal.ToString("HH:mm", [System.Globalization.CultureInfo]::InvariantCulture)
         return ($timeStr -ge $timeFrom -and $timeStr -le $timeTo)
     }
 
@@ -493,23 +498,23 @@ function Get-NextRunTime {
             if (Is-WithinTimeWindow $test) {
                 return $test
             } else {
-                $parsedFrom = [DateTime]::ParseExact($timeFrom, "HH:mm", $null)
-                $test = Get-Date -Year $test.Year -Month $test.Month -Day $test.Day -Hour $parsedFrom.Hour -Minute ($parsedFrom.Minute + 5) -Second 0 -Millisecond 0
+                $parsedFrom = [DateTime]::ParseExact($timeFrom, "HH:mm", [System.Globalization.CultureInfo]::InvariantCulture)
+                $test = (Get-Date -Year $test.Year -Month $test.Month -Day $test.Day -Hour $parsedFrom.Hour -Minute $parsedFrom.Minute -Second 0 -Millisecond 0).AddMinutes(5)
                 if ($test -le $now) {
                     $test = $test.AddDays(1)
-                    $test = Get-Date -Year $test.Year -Month $test.Month -Day $test.Day -Hour $parsedFrom.Hour -Minute ($parsedFrom.Minute + 5) -Second 0 -Millisecond 0
+                    $test = (Get-Date -Year $test.Year -Month $test.Month -Day $test.Day -Hour $parsedFrom.Hour -Minute $parsedFrom.Minute -Second 0 -Millisecond 0).AddMinutes(5)
                 }
             }
         } else {
             $startHour = 0
             $startMin = 5
             if ($IntervalVal -ne "6H" -and $IntervalVal -ne "12H") {
-                $parsedFrom = [DateTime]::ParseExact($timeFrom, "HH:mm", $null)
+                $parsedFrom = [DateTime]::ParseExact($timeFrom, "HH:mm", [System.Globalization.CultureInfo]::InvariantCulture)
                 $startHour = $parsedFrom.Hour
                 $startMin = $parsedFrom.Minute + 5
             }
             $test = $test.AddDays(1)
-            $test = Get-Date -Year $test.Year -Month $test.Month -Day $test.Day -Hour $startHour -Minute $startMin -Second 0 -Millisecond 0
+            $test = (Get-Date -Year $test.Year -Month $test.Month -Day $test.Day -Hour $startHour -Minute 0 -Second 0 -Millisecond 0).AddMinutes($startMin)
         }
         $safetyCounter++
     }
