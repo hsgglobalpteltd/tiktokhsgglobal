@@ -961,74 +961,76 @@ pause`.trim();
             </form>
 
             {/* Local Auto-Sync Script Generator Sub-section */}
-            <div style={{ borderTop: "1px solid #E0E2E6", margin: "16px 0 0 0", paddingTop: "20px" }}>
-              <h3 className="form-label" style={{ fontWeight: 600, fontSize: "13px", color: "var(--text-primary)", marginBottom: "16px" }}>
-                Local Sync Daemon Generator
-              </h3>
+            {isPrintTerminal && (
+              <div style={{ borderTop: "1px solid #E0E2E6", margin: "16px 0 0 0", paddingTop: "20px" }}>
+                <h3 className="form-label" style={{ fontWeight: 600, fontSize: "13px", color: "var(--text-primary)", marginBottom: "16px" }}>
+                  Local Sync Daemon Generator
+                </h3>
 
-              <div className="form-group" style={{ marginBottom: "16px" }}>
-                <label className="form-label">Wait Sync (Seconds)</label>
-                <input 
-                  type="number" 
-                  value={killDelay} 
-                  onChange={(e) => {
-                    setKillDelay(e.target.value);
-                    localStorage.setItem("kill_delay", e.target.value);
-                  }}
-                  placeholder="e.g. 30"
-                  className="form-input"
-                  style={{ maxWidth: "450px", height: "36px" }}
-                />
-                <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
-                  Number of seconds the script waits after triggering sync before downloading AWBs.
-                </span>
+                <div className="form-group" style={{ marginBottom: "16px" }}>
+                  <label className="form-label">Wait Sync (Seconds)</label>
+                  <input 
+                    type="number" 
+                    value={killDelay} 
+                    onChange={(e) => {
+                      setKillDelay(e.target.value);
+                      localStorage.setItem("kill_delay", e.target.value);
+                    }}
+                    placeholder="e.g. 30"
+                    className="form-input"
+                    style={{ maxWidth: "450px", height: "36px" }}
+                  />
+                  <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
+                    Number of seconds the script waits after triggering sync before downloading AWBs.
+                  </span>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: "16px" }}>
+                  <label className="form-label">Archive Folder Path</label>
+                  <input 
+                    type="text" 
+                    value={archiveFolder} 
+                    onChange={(e) => {
+                      setArchiveFolder(e.target.value);
+                      localStorage.setItem("archive_folder_path", e.target.value);
+                    }}
+                    placeholder="e.g. C:\Users\User\Downloads\Archive"
+                    className="form-input"
+                    style={{ maxWidth: "100%" }}
+                  />
+                  <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
+                    Folder where processed/printed AWB PDFs will be archived.
+                  </span>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: "20px" }}>
+                  <label className="form-label">SumatraPDF Path</label>
+                  <input 
+                    type="text" 
+                    value={sumatraPath} 
+                    onChange={(e) => {
+                      setSumatraPath(e.target.value);
+                      localStorage.setItem("sumatra_path", e.target.value);
+                    }}
+                    placeholder="e.g. C:\Users\User\AppData\Local\SumatraPDF\SumatraPDF.exe"
+                    className="form-input"
+                    style={{ maxWidth: "100%" }}
+                  />
+                  <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
+                    Path to SumatraPDF.exe executable for silent printing.
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadAutomationFiles}
+                  className="btn-primary"
+                  style={{ alignSelf: "flex-start", height: "36px", padding: "0 24px" }}
+                >
+                  Download Automation Files
+                </button>
               </div>
-
-              <div className="form-group" style={{ marginBottom: "16px" }}>
-                <label className="form-label">Archive Folder Path</label>
-                <input 
-                  type="text" 
-                  value={archiveFolder} 
-                  onChange={(e) => {
-                    setArchiveFolder(e.target.value);
-                    localStorage.setItem("archive_folder_path", e.target.value);
-                  }}
-                  placeholder="e.g. C:\Users\User\Downloads\Archive"
-                  className="form-input"
-                  style={{ maxWidth: "100%" }}
-                />
-                <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
-                  Folder where processed/printed AWB PDFs will be archived.
-                </span>
-              </div>
-
-              <div className="form-group" style={{ marginBottom: "20px" }}>
-                <label className="form-label">SumatraPDF Path</label>
-                <input 
-                  type="text" 
-                  value={sumatraPath} 
-                  onChange={(e) => {
-                    setSumatraPath(e.target.value);
-                    localStorage.setItem("sumatra_path", e.target.value);
-                  }}
-                  placeholder="e.g. C:\Users\User\AppData\Local\SumatraPDF\SumatraPDF.exe"
-                  className="form-input"
-                  style={{ maxWidth: "100%" }}
-                />
-                <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
-                  Path to SumatraPDF.exe executable for silent printing.
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleDownloadAutomationFiles}
-                className="btn-primary"
-                style={{ alignSelf: "flex-start", height: "36px", padding: "0 24px" }}
-              >
-                Download Automation Files
-              </button>
-            </div>
+            )}
           </div>
 
           {/* Terminal Print Testing Section removed */}
