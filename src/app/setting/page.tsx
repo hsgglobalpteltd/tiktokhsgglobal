@@ -380,28 +380,23 @@ export default function SettingPage() {
   // Terminal auto print testing functions removed
 
   const handleDownloadAutomationFiles = () => {
-    if (!watchFolder.trim() || !archiveFolder.trim() || !sumatraPath.trim()) {
-      showToast("Please specify Watch Folder, Archive Folder, and SumatraPDF Path.");
+    if (!archiveFolder.trim() || !sumatraPath.trim()) {
+      showToast("Please specify Archive Folder and SumatraPDF Path.");
       return;
     }
 
-    localStorage.setItem("edge_path", edgePath);
-    localStorage.setItem("edge_profile", edgeProfile);
     localStorage.setItem("kill_delay", killDelay);
-    localStorage.setItem("watch_folder_path", watchFolder);
     localStorage.setItem("archive_folder_path", archiveFolder);
     localStorage.setItem("sumatra_path", sumatraPath);
 
-    const targetUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+    const targetUrl = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobalpteltd.workers.dev";
+    // Standardize backend URL to avoid local origin confusion
+    const backendUrl = "https://ib.hsgglobalpteltd.workers.dev";
 
     const ps1Content = `
-$edgePath = "${edgePath.replace(/\\/g, '\\\\')}"
-$url = "${targetUrl}"
-$profile = "${edgeProfile}"
+$baseUrl = "${backendUrl}"
 $delay = ${killDelay}
 $interval = "${syncInterval}"
-$arguments = "--profile-directory=\`"$profile\`" \`"$url\`""
-$watchFolder = "${watchFolder.replace(/\\/g, '\\\\')}"
 $archiveFolder = "${archiveFolder.replace(/\\/g, '\\\\')}"
 $sumatraPath = "${sumatraPath.replace(/\\/g, '\\\\')}"
 $workingDays = @(${syncWorkingDays.map(d => `"${d}"`).join(', ')})
@@ -409,12 +404,10 @@ $timeFrom = "${syncTimeFrom}"
 $timeTo = "${syncTimeTo}"
 
 Write-Host "========================================"
-Write-Host "Script Started (EDGE AUTO-SYNC DAEMON)"
-Write-Host "Target: $url"
-Write-Host "Profile: $profile"
+Write-Host "Script Started (R2 HEADLESS SYNC DAEMON)"
+Write-Host "Base Worker URL: $baseUrl"
 Write-Host "Interval: $interval"
-Write-Host "Kill Delay: $delay seconds"
-Write-Host "Watch Folder: $watchFolder"
+Write-Host "Wait Sync: $delay seconds"
 Write-Host "Archive Folder: $archiveFolder"
 Write-Host "SumatraPDF: $sumatraPath"
 Write-Host "Working Days: $($workingDays -join ', ')"
@@ -524,120 +517,107 @@ function Get-NextRunTime {
     return (Get-Date).AddHours(1)
 }
 
-function Process-DownloadedAWBs {
-    Write-Host "Scanning Watch Folder for new AWBs..."
-    if (Test-Path $watchFolder) {
-        if (!(Test-Path $archiveFolder)) {
-            New-Item -ItemType Directory -Path $archiveFolder -Force | Out-Null
+function Run-SyncAndPrint {
+    Write-Host "Triggering background sync on Cloudflare..."
+    try {
+        $syncRes = Invoke-RestMethod -Uri "$baseUrl/api/tiktok/sync-background" -Method Get
+        Write-Host "Sync request triggered successfully. Wait Sync for $delay seconds..."
+    } catch {
+        Write-Host "Failed to trigger sync: $_" -ForegroundColor Red
+    }
+
+    Start-Sleep -Seconds $delay
+
+    # Download WorkingLog.txt and display it
+    Write-Host "======= Auto Sync Start =========="
+    try {
+        $logContent = Invoke-RestMethod -Uri "$baseUrl/api/files/TiktokAWBPrintPending/WorkingLog.txt" -Method Get
+        Write-Host $logContent
+    } catch {
+        Write-Host "Failed to download WorkingLog.txt: $_" -ForegroundColor Yellow
+    }
+    Write-Host "======= Auto Sync End =========="
+
+    # Watch R2 for print-pending files
+    if (!(Test-Path $archiveFolder)) {
+        New-Item -ItemType Directory -Path $archiveFolder -Force | Out-Null
+    }
+    $logFile = Join-Path $archiveFolder "PrintLog.txt"
+    if (!(Test-Path $logFile)) {
+        New-Item -ItemType File -Path $logFile -Force | Out-Null
+    }
+
+    Write-Host "====== Auto Print Start ====="
+    $pendingFiles = @()
+    try {
+        $pendingRes = Invoke-RestMethod -Uri "$baseUrl/api/tiktok/pending-files" -Method Get
+        if ($pendingRes.success -and $pendingRes.files) {
+            $pendingFiles = $pendingRes.files
         }
-        $logFile = Join-Path $archiveFolder "PrintLog.txt"
-        if (!(Test-Path $logFile)) {
-            New-Item -ItemType File -Path $logFile -Force | Out-Null
-        }
-        
-        $pdfFiles = Get-ChildItem -Path $watchFolder -Filter "AutoPrintAWB_*.pdf" -File | Sort-Object LastWriteTime
-        if ($pdfFiles.Count -eq 0) {
-            Write-Host "No PDF files found in Watch Folder."
-            return
-        }
-        
-        Write-Host "Found $($pdfFiles.Count) PDF file(s) to process."
-        
-        foreach ($file in $pdfFiles) {
-            $fileName = $file.Name
-            $filePath = $file.FullName
-            
-            if (Test-Path $sumatraPath) {
-                Write-Host "Printing silently: $fileName"
-                $printArgs = "-print-to-default -silent -exit-on-print \`"$filePath\`""
-                Start-Process -FilePath $sumatraPath -ArgumentList $printArgs -WindowStyle Hidden
-                
-                # Wait 3 seconds to let print spooler process
-                Start-Sleep -Seconds 3
-                
-                # Move to Archive
-                $destPath = Join-Path $archiveFolder $fileName
-                if (Test-Path $destPath) {
-                    $base = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
-                    $ext = [System.IO.Path]::GetExtension($fileName)
-                    $counter = 1
-                    while (Test-Path $destPath) {
-                        $destPath = Join-Path $archiveFolder "$base\`_$counter$ext"
-                        $counter++
-                    }
-                }
-                
-                try {
-                    Move-Item -Path $filePath -Destination $destPath -Force
-                    Write-Host "Archived: $fileName -> $(Split-Path $destPath -Leaf)"
-                    
+    } catch {
+        Write-Host "Failed to list pending files from R2: $_" -ForegroundColor Yellow
+    }
+
+    if ($pendingFiles.Count -gt 0) {
+        foreach ($fileKey in $pendingFiles) {
+            $fileName = Split-Path $fileKey -Leaf
+            $localPath = Join-Path $archiveFolder $fileName
+
+            Write-Host "$($fileName.Replace('.pdf', '')) Downloading.."
+            try {
+                # Download file
+                $fileUrl = "$baseUrl/api/files/$([Uri]::EscapeDataString($fileKey))"
+                Invoke-WebRequest -UseBasicParsing -Uri $fileUrl -OutFile $localPath
+
+                # Print file
+                if (Test-Path $sumatraPath) {
+                    Write-Host "$($fileName.Replace('.pdf', '')) Printing.."
+                    $printArgs = "-print-to-default -silent -exit-on-print \`"$localPath\`""
+                    Start-Process -FilePath $sumatraPath -ArgumentList $printArgs -WindowStyle Hidden
+                    Start-Sleep -Seconds 3
+
+                    # Update PrintLog.txt
                     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                    "[$timestamp] Printed: $fileName -> Archived as: $(Split-Path $destPath -Leaf)" | Add-Content -Path $logFile
-                } catch {
-                    Write-Host "Error moving \${fileName}. Error: \$_" -ForegroundColor Yellow
+                    "[$timestamp] Printed: $fileName" | Add-Content -Path $logFile
+
+                    # Delete file in R2
+                    $deleteUrl = "$baseUrl/api/files/$([Uri]::EscapeDataString($fileKey))"
+                    $delRes = Invoke-WebRequest -UseBasicParsing -Uri $deleteUrl -Method Delete
+                } else {
+                    Write-Host "SumatraPDF executable not found at: $sumatraPath" -ForegroundColor Red
                 }
-            } else {
-                Write-Host "SumatraPDF executable not found at: $sumatraPath" -ForegroundColor Red
+            } catch {
+                Write-Host "Error processing file \${fileName}: \$_" -ForegroundColor Red
             }
         }
-    } else {
-        Write-Host "Watch folder path does not exist: $watchFolder" -ForegroundColor Red
+        Write-Host "Print Log Updated."
     }
+
+    Write-Host "Task Complete."
+    Write-Host "Exit"
+    Write-Host "====== Auto Print End ====="
 }
 
 # Run once immediately on start
-Write-Host "Running initial sync..."
-Write-Host "Waking up the screen..."
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait(" ")
-Start-Sleep -Seconds 2
-
-Write-Host "Opening Edge..."
-Start-Process -FilePath $edgePath -ArgumentList $arguments -WindowStyle Minimized
-
-Write-Host "Keeping browser open for $delay seconds..."
-Start-Sleep -Seconds $delay
-
-Write-Host "Closing Edge..."
-Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 1
-taskkill /F /IM msedge.exe /T 2> $null
-Start-Sleep -Seconds 1
-
-Process-DownloadedAWBs
+Run-SyncAndPrint
 
 while ($true) {
     $nextTime = Get-NextRunTime -IntervalVal $interval
     $sleepSec = ($nextTime - (Get-Date)).TotalSeconds
     
     if ($sleepSec -gt 0) {
-        Write-Host "Next sync scheduled at: $($nextTime.ToString('HH:mm:ss dd/MM/yyyy'))"
-        Write-Host "Sleeping for $($sleepSec) seconds..."
+        Write-Host "====== Next Run ====="
+        Write-Host "Automation will start back at $($nextTime.ToString('hh:mmtt'))"
+        Write-Host "======Terminal Sleep===="
         Start-Sleep -Seconds $sleepSec
     }
-    
-    Write-Host "Waking up the screen..."
-    [System.Windows.Forms.SendKeys]::SendWait(" ")
-    Start-Sleep -Seconds 2
 
-    Write-Host "Opening Edge..."
-    Start-Process -FilePath $edgePath -ArgumentList $arguments -WindowStyle Minimized
-
-    Write-Host "Keeping browser open for $delay seconds..."
-    Start-Sleep -Seconds $delay
-
-    Write-Host "Closing Edge..."
-    Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-    taskkill /F /IM msedge.exe /T 2> $null
-    Start-Sleep -Seconds 1
-
-    Process-DownloadedAWBs
+    Run-SyncAndPrint
 }
 `.trim();
 
     const batContent = `@echo off
-echo Starting Edge Automation Daemon...
+echo Starting TikTok R2 Auto-Sync Daemon...
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0%~n0.ps1"
 echo.
 echo ========================================
@@ -977,78 +957,27 @@ pause`.trim();
               </div>
             </form>
 
-            {/* Edge Auto-Sync Script Generator Sub-section */}
+            {/* R2 Auto-Sync Script Generator Sub-section */}
             <div style={{ borderTop: "1px solid #E0E2E6", margin: "16px 0 0 0", paddingTop: "20px" }}>
               <h3 className="form-label" style={{ fontWeight: 600, fontSize: "13px", color: "var(--text-primary)", marginBottom: "16px" }}>
-                Local Edge Sync Daemon Generator
+                Local R2 Sync Daemon Generator
               </h3>
-              
-              <div className="form-group" style={{ marginBottom: "16px" }}>
-                <label className="form-label">Edge Executable Path</label>
-                <input 
-                  type="text" 
-                  value={edgePath} 
-                  onChange={(e) => {
-                    setEdgePath(e.target.value);
-                    localStorage.setItem("edge_path", e.target.value);
-                  }}
-                  placeholder="e.g. C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-                  className="form-input"
-                  style={{ maxWidth: "100%" }}
-                />
-                <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
-                  Standard path: <code>C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe</code>
-                </span>
-              </div>
 
-              <div className="flex gap-4" style={{ marginBottom: "20px" }}>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Edge Profile Directory</label>
-                  <select
-                    value={edgeProfile}
-                    onChange={(e) => {
-                      setEdgeProfile(e.target.value);
-                      localStorage.setItem("edge_profile", e.target.value);
-                    }}
-                    className="form-input"
-                    style={{ maxWidth: "100%", height: "36px", padding: "0 10px" }}
-                  >
-                    <option value="Default">Default</option>
-                    {Array.from({ length: 20 }, (_, i) => `Profile ${i + 1}`).map(prof => (
-                      <option key={prof} value={prof}>{prof}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Kill Delay (Seconds)</label>
-                  <input 
-                    type="number" 
-                    value={killDelay} 
-                    onChange={(e) => {
-                      setKillDelay(e.target.value);
-                      localStorage.setItem("kill_delay", e.target.value);
-                    }}
-                    placeholder="e.g. 180"
-                    className="form-input"
-                    style={{ maxWidth: "100%", height: "36px" }}
-                  />
-                </div>
-              </div>
               <div className="form-group" style={{ marginBottom: "16px" }}>
-                <label className="form-label">Watch Folder Path</label>
+                <label className="form-label">Wait Sync (Seconds)</label>
                 <input 
-                  type="text" 
-                  value={watchFolder} 
+                  type="number" 
+                  value={killDelay} 
                   onChange={(e) => {
-                    setWatchFolder(e.target.value);
-                    localStorage.setItem("watch_folder_path", e.target.value);
+                    setKillDelay(e.target.value);
+                    localStorage.setItem("kill_delay", e.target.value);
                   }}
-                  placeholder="e.g. C:\Users\User\Downloads"
+                  placeholder="e.g. 30"
                   className="form-input"
-                  style={{ maxWidth: "100%" }}
+                  style={{ maxWidth: "450px", height: "36px" }}
                 />
                 <span className="helper-note" style={{ fontSize: "10px", color: "#80868B" }}>
-                  Folder containing downloaded AWB PDFs.
+                  Number of seconds the script waits after triggering sync before downloading AWBs.
                 </span>
               </div>
 

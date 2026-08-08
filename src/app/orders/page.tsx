@@ -240,8 +240,10 @@ export default function OrdersPage() {
         throw new Error(data.error || "Unknown error occurred");
       }
     } catch (err: any) {
-      console.error("Error fetching orders:", err);
-      if (!silent) {
+      if (silent) {
+        console.warn("Silent background sync failed (possibly offline):", err.message || err);
+      } else {
+        console.error("Error fetching orders:", err);
         setError(err.message || "Failed to load orders dashboard data.");
       }
     } finally {
