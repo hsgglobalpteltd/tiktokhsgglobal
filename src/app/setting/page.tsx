@@ -533,87 +533,98 @@ function Check-AndPrintPending {
             $pendingFiles = $pendingRes.files
         }
     } catch {
-        Write-Host "Failed to list pending files: \$_" -ForegroundColor Yellow
+        # Silent check failure to avoid console clutter
     }
 
     if ($pendingFiles.Count -gt 0) {
-        Write-Host "====== Auto Print Start ====="
+        Write-Host "===Printer Online====="
         foreach ($fileKey in $pendingFiles) {
             $fileName = Split-Path $fileKey -Leaf
             $localPath = Join-Path $archiveFolder $fileName
+            $idOnly = $fileName.Replace('.pdf', '')
 
-            Write-Host "\$($fileName.Replace('.pdf', '')) Downloading.."
+            Write-Host "$idOnly Downloading.."
             try {
                 # Download file
-                $fileUrl = "$baseUrl/api/files/\$([Uri]::EscapeDataString($fileKey))"
+                $fileUrl = "$baseUrl/api/files/$([Uri]::EscapeDataString($fileKey))"
                 $dlRes = Invoke-RestMethod -Uri $fileUrl -OutFile $localPath
 
                 # Print file
                 if (Test-Path $sumatraPath) {
-                    Write-Host "\$($fileName.Replace('.pdf', '')) Printing.."
-                    $printArgs = "-print-to-default -silent -exit-on-print \`"\$localPath\`""
+                    Write-Host "$idOnly Printing.."
+                    $printArgs = "-print-to-default -silent -exit-on-print \`"$localPath\`""
                     Start-Process -FilePath $sumatraPath -ArgumentList $printArgs -WindowStyle Hidden
                     Start-Sleep -Seconds 3
 
                     # Update PrintLog.txt
                     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                    "[\$timestamp] Printed: \$fileName" | Add-Content -Path $logFile
+                    "[$timestamp] Printed: $fileName" | Add-Content -Path $logFile
 
                     # Delete file from secure storage
-                    $deleteUrl = "$baseUrl/api/files/\$([Uri]::EscapeDataString($fileKey))"
+                    $deleteUrl = "$baseUrl/api/files/$([Uri]::EscapeDataString($fileKey))"
                     $delRes = Invoke-RestMethod -Uri $deleteUrl -Method Delete
                 } else {
-                    Write-Host "SumatraPDF executable not found at: \$sumatraPath" -ForegroundColor Red
+                    Write-Host "SumatraPDF executable not found at: $sumatraPath" -ForegroundColor Red
                 }
             } catch {
-                Write-Host "Error processing file \${fileName}: \$_" -ForegroundColor Red
+                Write-Host "Error processing file $idOnly: $_" -ForegroundColor Red
             }
         }
-        Write-Host "Print Log Updated."
-        Write-Host "Task Complete."
-        Write-Host "Exit"
-        Write-Host "====== Auto Print End ====="
+        Write-Host "===Printer Printer Standby====="
+        Write-Host ""
+        Write-Host ""
     }
 }
 
 # Track when the next background sync should run
-\$nextSyncTime = Get-Date # Run sync immediately on first check
+$nextSyncTime = Get-Date # Run sync immediately on first check
+$showSleepMsg = $true
 
-while (\$true) {
-    \$now = Get-Date
-    if (\$now -ge \$nextSyncTime) {
+while ($true) {
+    $now = Get-Date
+    if ($now -ge $nextSyncTime) {
         Write-Host "Triggering background sync..."
         try {
-            \$syncRes = Invoke-RestMethod -Uri "\$baseUrl/api/tiktok/sync-background" -Method Get
-            Write-Host "Sync request triggered successfully. Wait Sync for \$delay seconds..."
+            $syncRes = Invoke-RestMethod -Uri "$baseUrl/api/tiktok/sync-background" -Method Get
+            Write-Host "Sync request triggered successfully. Wait Sync for $delay seconds..."
         } catch {
-            Write-Host "Failed to trigger sync: \$_" -ForegroundColor Red
+            Write-Host "Failed to trigger sync: $_" -ForegroundColor Red
         }
 
-        Start-Sleep -Seconds \$delay
+        Start-Sleep -Seconds $delay
 
         # Download WorkingLog.txt and display it
+        Write-Host ""
+        Write-Host ""
         Write-Host "======= Auto Sync Start =========="
         try {
-            \$logContent = Invoke-RestMethod -Uri "\$baseUrl/api/files/TiktokAWBPrintPending/WorkingLog.txt" -Method Get
-            Write-Host \$logContent
+            $logContent = Invoke-RestMethod -Uri "$baseUrl/api/files/TiktokAWBPrintPending/WorkingLog.txt" -Method Get
+            Write-Host $logContent
         } catch {
-            Write-Host "Failed to download WorkingLog.txt: \$_" -ForegroundColor Yellow
+            Write-Host "Failed to download WorkingLog.txt: $_" -ForegroundColor Yellow
         }
         Write-Host "======= Auto Sync End =========="
+        Write-Host ""
+        Write-Host ""
 
         # Calculate next sync run time
-        \$nextSyncTime = Get-NextRunTime -IntervalVal \$interval
+        $nextSyncTime = Get-NextRunTime -IntervalVal $interval
+        $showSleepMsg = $true
     }
 
     # Always check for pending manual prints (runs every 1 minute)
     Check-AndPrintPending
 
-    # Show standby state and sleep for 60 seconds
-    Write-Host "====== Next Run ====="
-    Write-Host "Automation will start back at \$(\$nextSyncTime.ToString('hh:mmtt'))"
-    Write-Host "AWB Printer Standby"
-    Write-Host "======Terminal Sleep===="
+    # Show standby state and sleep for 60 seconds (once per sync cycle to avoid terminal spam)
+    if ($showSleepMsg) {
+        Write-Host "====== Next Run ====="
+        Write-Host "Automation will start back at $($nextSyncTime.ToString('hh:mmtt'))"
+        Write-Host "AWB Printer Standby"
+        Write-Host "======Terminal Sleep===="
+        Write-Host ""
+        Write-Host ""
+        $showSleepMsg = $false
+    }
     
     Start-Sleep -Seconds 60
 }
