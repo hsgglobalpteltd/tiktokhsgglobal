@@ -567,7 +567,7 @@ function Check-AndPrintPending {
                     Write-Host "SumatraPDF executable not found at: $sumatraPath" -ForegroundColor Red
                 }
             } catch {
-                Write-Host "Error processing file $idOnly: $_" -ForegroundColor Red
+                Write-Host "Error processing file \${idOnly}: \$_" -ForegroundColor Red
             }
         }
         Write-Host "===Printer Printer Standby====="
@@ -874,7 +874,8 @@ pause`.trim();
           </div>
 
           {/* Auto-Sync Settings Section */}
-          <div className="settings-section" style={{ flex: "1 0 auto", overflow: "visible" }}>
+          {isPrintTerminal && (
+            <div className="settings-section" style={{ flex: "1 0 auto", overflow: "visible" }}>
             
             {/* Header (contains save button only if there are changes) */}
             <div className="flex justify-between items-center" style={{ marginBottom: "16px" }}>
@@ -974,8 +975,7 @@ pause`.trim();
             </form>
 
             {/* Local Auto-Sync Script Generator Sub-section */}
-            {isPrintTerminal && (
-              <div style={{ borderTop: "1px solid #E0E2E6", margin: "16px 0 0 0", paddingTop: "20px" }}>
+            <div style={{ borderTop: "1px solid #E0E2E6", margin: "16px 0 0 0", paddingTop: "20px" }}>
                 <h3 className="form-label" style={{ fontWeight: 600, fontSize: "13px", color: "var(--text-primary)", marginBottom: "16px" }}>
                   Local Sync Daemon Generator
                 </h3>
@@ -1043,8 +1043,8 @@ pause`.trim();
                   Download Automation Files
                 </button>
               </div>
-            )}
           </div>
+          )}
 
           {/* Terminal Print Testing Section removed */}
 
