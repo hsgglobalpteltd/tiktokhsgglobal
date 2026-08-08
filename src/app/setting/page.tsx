@@ -707,11 +707,13 @@ pause`.trim();
   }
 
   return (
-    <div className="blank-route-page" style={{ display: "block", overflowY: "auto", position: "fixed", inset: 0 }}>
+    <div className="blank-route-page" style={{ display: "block", overflow: "hidden", position: "fixed", inset: 0 }}>
       <TopBar title="Setting" />
 
-      {/* Main Settings Canvas Container */}
-      <div className="settings-container">
+      {/* Scrollable Container for Settings content */}
+      <div style={{ height: "calc(100vh - 32px)", overflowY: "auto", width: "100%" }}>
+        {/* Main Settings Canvas Container */}
+        <div className="settings-container">
         
         {/* Left Column Wrapper */}
         <div className="flex flex-col gap-5 pr-1" style={{ height: "auto", minWidth: "0" }}>
@@ -1391,6 +1393,8 @@ pause`.trim();
             </div>
           </div>
         </div>
+
+      </div>
 
       </div>
 
