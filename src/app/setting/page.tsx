@@ -404,8 +404,8 @@ $timeFrom = "${syncTimeFrom}"
 $timeTo = "${syncTimeTo}"
 
 Write-Host "========================================"
-Write-Host "Script Started (R2 HEADLESS SYNC DAEMON)"
-Write-Host "Base Worker URL: $baseUrl"
+Write-Host "Script Started (LOCAL SYNC DAEMON)"
+Write-Host "Base API URL: $baseUrl"
 Write-Host "Interval: $interval"
 Write-Host "Wait Sync: $delay seconds"
 Write-Host "Archive Folder: $archiveFolder"
@@ -518,7 +518,7 @@ function Get-NextRunTime {
 }
 
 function Run-SyncAndPrint {
-    Write-Host "Triggering background sync on Cloudflare..."
+    Write-Host "Triggering background sync..."
     try {
         $syncRes = Invoke-RestMethod -Uri "$baseUrl/api/tiktok/sync-background" -Method Get
         Write-Host "Sync request triggered successfully. Wait Sync for $delay seconds..."
@@ -538,7 +538,7 @@ function Run-SyncAndPrint {
     }
     Write-Host "======= Auto Sync End =========="
 
-    # Watch R2 for print-pending files
+    # Watch for print-pending files
     if (!(Test-Path $archiveFolder)) {
         New-Item -ItemType Directory -Path $archiveFolder -Force | Out-Null
     }
@@ -555,7 +555,7 @@ function Run-SyncAndPrint {
             $pendingFiles = $pendingRes.files
         }
     } catch {
-        Write-Host "Failed to list pending files from R2: $_" -ForegroundColor Yellow
+        Write-Host "Failed to list pending files: $_" -ForegroundColor Yellow
     }
 
     if ($pendingFiles.Count -gt 0) {
@@ -567,7 +567,7 @@ function Run-SyncAndPrint {
             try {
                 # Download file
                 $fileUrl = "$baseUrl/api/files/$([Uri]::EscapeDataString($fileKey))"
-                Invoke-WebRequest -UseBasicParsing -Uri $fileUrl -OutFile $localPath
+                $dlRes = Invoke-RestMethod -Uri $fileUrl -OutFile $localPath
 
                 # Print file
                 if (Test-Path $sumatraPath) {
@@ -580,9 +580,9 @@ function Run-SyncAndPrint {
                     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                     "[$timestamp] Printed: $fileName" | Add-Content -Path $logFile
 
-                    # Delete file in R2
+                    # Delete file from secure storage
                     $deleteUrl = "$baseUrl/api/files/$([Uri]::EscapeDataString($fileKey))"
-                    $delRes = Invoke-WebRequest -UseBasicParsing -Uri $deleteUrl -Method Delete
+                    $delRes = Invoke-RestMethod -Uri $deleteUrl -Method Delete
                 } else {
                     Write-Host "SumatraPDF executable not found at: $sumatraPath" -ForegroundColor Red
                 }
@@ -957,10 +957,10 @@ pause`.trim();
               </div>
             </form>
 
-            {/* R2 Auto-Sync Script Generator Sub-section */}
+            {/* Local Auto-Sync Script Generator Sub-section */}
             <div style={{ borderTop: "1px solid #E0E2E6", margin: "16px 0 0 0", paddingTop: "20px" }}>
               <h3 className="form-label" style={{ fontWeight: 600, fontSize: "13px", color: "var(--text-primary)", marginBottom: "16px" }}>
-                Local R2 Sync Daemon Generator
+                Local Sync Daemon Generator
               </h3>
 
               <div className="form-group" style={{ marginBottom: "16px" }}>
