@@ -234,7 +234,7 @@ export default function ScanPackPage() {
       if (!silent) {
         setIsLoading(true);
       }
-      const activeOnlyParam = silent ? "&active_only=true" : "";
+      const activeOnlyParam = "&active_only=true";
       const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as { orders: any[]; shops?: any[] };
