@@ -382,10 +382,17 @@ export default function ScanPackPage() {
         if (matched && matched.tts_sla_time) {
           const deadline = new Date(Number(matched.tts_sla_time));
           const now = new Date();
+          
+          const target15 = new Date(deadline);
+          target15.setHours(15, 0, 0, 0);
+          
+          const use15 = now.getTime() < target15.getTime();
+          const finalDeadline = use15 ? target15 : deadline;
+          
           const isToday = deadline.toDateString() === now.toDateString();
-          const isPast = deadline.getTime() < now.getTime();
-          const hoursRemaining = (deadline.getTime() - now.getTime()) / (1000 * 3600);
-          isUrgent = isPast || (isToday && hoursRemaining < 4);
+          const isPast = finalDeadline.getTime() < now.getTime();
+          const hoursRemaining = (finalDeadline.getTime() - now.getTime()) / (1000 * 3600);
+          isUrgent = isPast || (isToday && hoursRemaining < 4) || (!use15 && isToday);
         }
         
         // Draw row border lines
@@ -1111,21 +1118,33 @@ export default function ScanPackPage() {
     const deadline = new Date(Number(order.tts_sla_time));
     const now = new Date();
     
-    const hh = String(deadline.getHours()).padStart(2, '0');
-    const mm = String(deadline.getMinutes()).padStart(2, '0');
-    const timeStr = `${hh}:${mm}`;
+    const target15 = new Date(deadline);
+    target15.setHours(15, 0, 0, 0);
+    
+    const use15 = now.getTime() < target15.getTime();
+    
+    let displayTime = "";
+    let finalDeadline = deadline;
+    if (use15) {
+      displayTime = "15:00";
+      finalDeadline = target15;
+    } else {
+      const hh = String(deadline.getHours()).padStart(2, '0');
+      const mm = String(deadline.getMinutes()).padStart(2, '0');
+      displayTime = `${hh}:${mm}`;
+      finalDeadline = deadline;
+    }
     
     const isToday = deadline.toDateString() === now.toDateString();
-    const isPast = deadline.getTime() < now.getTime();
+    const isPast = finalDeadline.getTime() < now.getTime();
     
     const actualStatus = (order.actual_status || "").toUpperCase();
-    const systemStatus = (order.system_status || "").toLowerCase();
     const isShipped = ["PICK_UP", "IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED"].includes(actualStatus);
     
     if (isShipped) return null;
     
-    const hoursRemaining = (deadline.getTime() - now.getTime()) / (1000 * 3600);
-    const isUrgent = isPast || (isToday && hoursRemaining < 4);
+    const hoursRemaining = (finalDeadline.getTime() - now.getTime()) / (1000 * 3600);
+    const isUrgent = isPast || (isToday && hoursRemaining < 4) || (!use15 && isToday);
     const dateLabel = isToday ? "Today" : `${deadline.getDate()}/${deadline.getMonth() + 1}`;
     
     return (
@@ -1141,7 +1160,7 @@ export default function ScanPackPage() {
           <svg className={`w-2.5 h-2.5 ${isUrgent ? "animate-bounce" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
-          Collect by: {dateLabel} {timeStr}
+          Collect by: {dateLabel} {displayTime}
         </span>
       </div>
     );
