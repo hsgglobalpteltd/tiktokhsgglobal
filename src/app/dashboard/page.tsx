@@ -517,7 +517,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col items-center justify-center my-2 relative">
+                <div className="flex-1 flex flex-col items-center justify-start pt-6 my-2 relative">
                   <div className="relative flex items-center justify-center">
                     <span className="metric-number text-zinc-800 text-center relative">
                       {todayOrdersCount}
@@ -601,7 +601,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col items-center justify-center my-2">
+                <div className="flex-1 flex flex-col items-center justify-start pt-6 my-2">
                   <span className="metric-number text-zinc-800 text-center">
                     {weeklyOrdersCount}
                   </span>
@@ -649,7 +649,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col items-center justify-center my-2">
+                <div className="flex-1 flex flex-col items-center justify-start pt-6 my-2">
                   <span className="metric-number text-zinc-800 text-center">
                     {monthlyOrdersCount}
                   </span>
