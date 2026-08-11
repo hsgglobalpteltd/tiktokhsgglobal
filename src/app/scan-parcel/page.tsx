@@ -30,6 +30,8 @@ interface Order {
   total_amount?: string | number;
   currency?: string;
   logs?: any;
+  rts_sla_time?: number;
+  tts_sla_time?: number;
 }
 
 interface ScannedItem {
@@ -93,6 +95,11 @@ export default function ScanPackPage() {
 
   // Image zoom preview state
   const [zoomImgUrl, setZoomImgUrl] = React.useState<string | null>(null);
+
+  // Courier filter modal state
+  const [courierModalOpen, setCourierModalOpen] = React.useState(false);
+  const [selectedCourierFilter, setSelectedCourierFilter] = React.useState("All");
+  const [rawPendingTrackingIds, setRawPendingTrackingIds] = React.useState<any[]>([]);
 
   // Inactivity countdown state (60 seconds)
   const [inactivityCountdown, setInactivityCountdown] = React.useState(60);
@@ -260,6 +267,185 @@ export default function ScanPackPage() {
       }
     }
   };
+
+  const handleDownloadPendingList = async () => {
+    try {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/pending-tracking-ids");
+      if (!res.ok) throw new Error("Failed to fetch pending list");
+      const data = await res.json() as { success: boolean; tracking_ids: any[] };
+      if (!data.success || !data.tracking_ids) throw new Error("Failed to retrieve checklist");
+      
+      setRawPendingTrackingIds(data.tracking_ids);
+      setSelectedCourierFilter("All");
+      setCourierModalOpen(true);
+    } catch (err: any) {
+      alert("Error fetching pending checklist: " + err.message);
+    }
+  };
+
+  const generateFilteredPdfChecklist = async () => {
+    setCourierModalOpen(false);
+    try {
+      const terminalName = localStorage.getItem("terminal_name") || "Terminal";
+      const printTime = new Date().toLocaleString("en-SG", { timeZone: "Asia/Singapore" });
+      
+      const filteredItems = rawPendingTrackingIds.filter(item => {
+        if (selectedCourierFilter === "All") return true;
+        const matched = orders.find(o => String(o.id) === String(item.order_id));
+        const courierName = matched ? (matched.shipping_provider || "Unknown") : "Unknown";
+        return courierName === selectedCourierFilter;
+      });
+
+      if (filteredItems.length === 0) {
+        alert("No pending orders found for the selected courier.");
+        return;
+      }
+
+      // Load pdf-lib dynamically to avoid Next.js SSR issues
+      const { PDFDocument, rgb, StandardFonts } = await import("pdf-lib");
+      const pdfDoc = await PDFDocument.create();
+      
+      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const courier = await pdfDoc.embedFont(StandardFonts.Courier);
+      
+      const drawHeader = (pageObj: any, pageNum: number, totalPages: number) => {
+        // Draw main title
+        pageObj.drawText("TikTok Pending Checklist", { x: 40, y: 800, size: 18, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        
+        // Draw total parcels & courier info
+        pageObj.drawText(`Courier: ${selectedCourierFilter} | Total: ${filteredItems.length} parcels`, { x: 40, y: 780, size: 10, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        
+        // Draw meta info
+        pageObj.drawText(`Print Date/Time: ${printTime}`, { x: 380, y: 800, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        pageObj.drawText(`Printed By: ${terminalName}`, { x: 380, y: 785, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        pageObj.drawText(`Page ${pageNum} of ${totalPages}`, { x: 380, y: 770, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        
+        // Draw header row borders and background
+        pageObj.drawRectangle({
+          x: 40,
+          y: 730,
+          width: 515,
+          height: 20,
+          color: rgb(0.95, 0.95, 0.96),
+          borderColor: rgb(0.75, 0.76, 0.78),
+          borderWidth: 1
+        });
+        
+        // Draw header text (with exact column alignment)
+        pageObj.drawText("ID", { x: 48, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        pageObj.drawText("Tracking Number", { x: 178, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        pageObj.drawText("AWB", { x: 380, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        pageObj.drawText("Parcel", { x: 443, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        pageObj.drawText("Collect", { x: 505, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+      };
+      
+      const drawFooter = (pageObj: any) => {
+        pageObj.drawLine({ start: { x: 40, y: 55 }, end: { x: 555, y: 55 }, color: rgb(0.85, 0.85, 0.86), thickness: 0.5 });
+        pageObj.drawText("* Orders marked with an asterisk (*) are urgent. Please prioritize packing and ensure courier collection before 3:00 PM.", {
+          x: 40,
+          y: 40,
+          size: 7.5,
+          font: helveticaBold,
+          color: rgb(0.77, 0.13, 0.12)
+        });
+      };
+      
+      const rowsPerPage = 23;
+      const totalPages = Math.max(1, Math.ceil(filteredItems.length / rowsPerPage));
+      
+      let page = pdfDoc.addPage([595.28, 841.89]);
+      drawHeader(page, 1, totalPages);
+      drawFooter(page);
+      
+      let currentY = 710;
+      let countOnPage = 0;
+      let currentPageNum = 1;
+      
+      for (let i = 0; i < filteredItems.length; i++) {
+        if (countOnPage >= rowsPerPage) {
+          page = pdfDoc.addPage([595.28, 841.89]);
+          currentPageNum++;
+          drawHeader(page, currentPageNum, totalPages);
+          drawFooter(page);
+          currentY = 710;
+          countOnPage = 0;
+        }
+        
+        const item = filteredItems[i];
+        const id = item.order_id || "";
+        const tracking = item.tracking_number || "-";
+        
+        // Check if the order is urgent
+        const matched = orders.find(o => String(o.id) === String(id));
+        let isUrgent = false;
+        if (matched && matched.tts_sla_time) {
+          const deadline = new Date(Number(matched.tts_sla_time));
+          const now = new Date();
+          const isToday = deadline.toDateString() === now.toDateString();
+          const isPast = deadline.getTime() < now.getTime();
+          const hoursRemaining = (deadline.getTime() - now.getTime()) / (1000 * 3600);
+          isUrgent = isPast || (isToday && hoursRemaining < 4);
+        }
+        
+        // Draw row border lines
+        page.drawRectangle({
+          x: 40,
+          y: currentY,
+          width: 515,
+          height: 20,
+          borderColor: rgb(0.75, 0.76, 0.78),
+          borderWidth: 1
+        });
+        
+        // Vertical divider lines at exact offsets
+        page.drawLine({ start: { x: 170, y: currentY }, end: { x: 170, y: currentY + 20 }, color: rgb(0.75, 0.76, 0.78), thickness: 1 });
+        page.drawLine({ start: { x: 360, y: currentY }, end: { x: 360, y: currentY + 20 }, color: rgb(0.75, 0.76, 0.78), thickness: 1 });
+        page.drawLine({ start: { x: 425, y: currentY }, end: { x: 425, y: currentY + 20 }, color: rgb(0.75, 0.76, 0.78), thickness: 1 });
+        page.drawLine({ start: { x: 490, y: currentY }, end: { x: 490, y: currentY + 20 }, color: rgb(0.75, 0.76, 0.78), thickness: 1 });
+        
+        // Draw content text (ID is printed red and with * if urgent)
+        const displayId = isUrgent ? `${id}*` : id;
+        page.drawText(displayId, { 
+          x: 48, 
+          y: currentY + 6, 
+          size: 8, 
+          font: courier, 
+          color: isUrgent ? rgb(0.77, 0.13, 0.12) : rgb(0.12, 0.12, 0.12) 
+        });
+        page.drawText(tracking, { x: 178, y: currentY + 6, size: 8, font: courier, color: rgb(0.12, 0.12, 0.12) });
+        
+        // AWB and Collect columns are left completely empty
+        
+        // Parcel: draw green checkmark (✓) if packed
+        if (item.batch_id_packing) {
+          const cx = 457.5;
+          const cy = currentY + 6;
+          page.drawLine({ start: { x: cx - 4, y: cy + 2 }, end: { x: cx - 1, y: cy - 2 }, color: rgb(0.04, 0.52, 0.19), thickness: 1.5 });
+          page.drawLine({ start: { x: cx - 1, y: cy - 2 }, end: { x: cx + 4, y: cy + 6 }, color: rgb(0.04, 0.52, 0.19), thickness: 1.5 });
+        }
+        
+        currentY -= 20;
+        countOnPage++;
+      }
+      
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes as any], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      const dateStr = new Date().toLocaleDateString("en-SG").replace(/\//g, "-");
+      link.setAttribute("download", `TikTok_Pending_Checklist_${selectedCourierFilter.replace(/\s+/g, '_')}_${dateStr}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+    } catch (err: any) {
+      alert("Error generating PDF checklist: " + err.message);
+    }
+  };
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
@@ -919,6 +1105,48 @@ export default function ScanPackPage() {
     });
   };
 
+  const getSlaIndicator = (order: Order) => {
+    if (!order.tts_sla_time || Number(order.tts_sla_time) <= 0) return null;
+    
+    const deadline = new Date(Number(order.tts_sla_time));
+    const now = new Date();
+    
+    const hh = String(deadline.getHours()).padStart(2, '0');
+    const mm = String(deadline.getMinutes()).padStart(2, '0');
+    const timeStr = `${hh}:${mm}`;
+    
+    const isToday = deadline.toDateString() === now.toDateString();
+    const isPast = deadline.getTime() < now.getTime();
+    
+    const actualStatus = (order.actual_status || "").toUpperCase();
+    const systemStatus = (order.system_status || "").toLowerCase();
+    const isShipped = ["PICK_UP", "IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED"].includes(actualStatus);
+    
+    if (isShipped) return null;
+    
+    const hoursRemaining = (deadline.getTime() - now.getTime()) / (1000 * 3600);
+    const isUrgent = isPast || (isToday && hoursRemaining < 4);
+    const dateLabel = isToday ? "Today" : `${deadline.getDate()}/${deadline.getMonth() + 1}`;
+    
+    return (
+      <div className="mt-1">
+        <span 
+          className={`inline-flex items-center gap-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded ${
+            isUrgent 
+              ? "bg-[#FCE8E6] text-[#C5221F] border border-[#FAD2CF]" 
+              : "bg-[#FEF7E0] text-[#B06000] border border-[#FEEFC3]"
+          }`}
+          title={`Collection Deadline: ${deadline.toLocaleString("en-SG")}`}
+        >
+          <svg className={`w-2.5 h-2.5 ${isUrgent ? "animate-bounce" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          Collect by: {dateLabel} {timeStr}
+        </span>
+      </div>
+    );
+  };
+
   const getScanInfo = (order: Order, type: "before" | "after") => {
     const logs = Array.isArray(order.logs)
       ? order.logs
@@ -1065,6 +1293,26 @@ export default function ScanPackPage() {
                 />
               </div>
 
+              {/* Download Checklist button */}
+              <button
+                onClick={handleDownloadPendingList}
+                className="btn-secondary"
+                style={{
+                  padding: "8px 16px",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                  height: "32px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download Checklist
+              </button>
+
               {/* Scan Order button replacing Refresh Orders */}
               <button
                 onClick={openScanOptions}
@@ -1173,6 +1421,7 @@ export default function ScanPackPage() {
                           <span className="text-[10px] text-[#5F6368] block">
                             {formatDate(item.create_time)}
                           </span>
+                          {getSlaIndicator(item)}
                         </td>
 
                         {/* Shop */}
@@ -1641,6 +1890,84 @@ export default function ScanPackPage() {
                 style={{ backgroundColor: "#0B57D0" }}
               >
                 Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Courier checklist selection modal overlay */}
+      {courierModalOpen && (
+        <div className="fixed inset-0 bg-[#00000050] backdrop-blur-[1px] flex items-center justify-center z-[50000] p-4 select-none animate-[fadeIn_0.12s_ease-out]">
+          <div className="bg-white border border-[#E0E2E6] rounded-xl shadow-2xl max-w-sm w-full overflow-hidden flex flex-col">
+            
+            {/* Header */}
+            <div className="border-b border-[#E0E2E6] p-4 bg-[#F8F9FA] flex justify-between items-center">
+              <h3 className="text-sm font-bold text-[#1F1F1F]">
+                Select Courier for Checklist
+              </h3>
+              <button
+                onClick={() => setCourierModalOpen(false)}
+                className="text-[#5F6368] hover:text-[#1F1F1F] hover:bg-[#E8EAED] p-1 rounded-full transition"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 flex flex-col gap-2 max-h-60 overflow-y-auto">
+              <label className="flex items-center gap-3 text-xs text-[#1F1F1F] cursor-pointer p-2.5 rounded-lg border border-transparent hover:bg-[#F1F3F4] transition">
+                <input
+                  type="radio"
+                  name="courier-filter"
+                  checked={selectedCourierFilter === "All"}
+                  onChange={() => setSelectedCourierFilter("All")}
+                  className="accent-[#0B57D0] w-4 h-4"
+                />
+                <span className="font-semibold">All Couriers ({rawPendingTrackingIds.length})</span>
+              </label>
+              
+              {Array.from(new Set(rawPendingTrackingIds.map(item => {
+                const matched = orders.find(o => String(o.id) === String(item.order_id));
+                return matched ? (matched.shipping_provider || "Unknown") : "Unknown";
+              }))).filter(Boolean).sort().map(courierName => {
+                const count = rawPendingTrackingIds.filter(item => {
+                  const matched = orders.find(o => String(o.id) === String(item.order_id));
+                  const cName = matched ? (matched.shipping_provider || "Unknown") : "Unknown";
+                  return cName === courierName;
+                }).length;
+                
+                return (
+                  <label key={courierName} className="flex items-center gap-3 text-xs text-[#1F1F1F] cursor-pointer p-2.5 rounded-lg border border-transparent hover:bg-[#F1F3F4] transition">
+                    <input
+                      type="radio"
+                      name="courier-filter"
+                      checked={selectedCourierFilter === courierName}
+                      onChange={() => setSelectedCourierFilter(courierName)}
+                      className="accent-[#0B57D0] w-4 h-4"
+                    />
+                    <span>{courierName} ({count})</span>
+                  </label>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-[#E0E2E6] p-4 bg-[#F8F9FA] flex justify-end gap-2">
+              <button
+                onClick={() => setCourierModalOpen(false)}
+                className="px-4 py-2 border border-[#D0D4DC] hover:bg-[#E8EAED] text-[#5F6368] text-xs font-semibold rounded-lg transition active:scale-95 cursor-pointer outline-none"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={generateFilteredPdfChecklist}
+                className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white text-xs font-semibold rounded-lg transition active:scale-95 cursor-pointer outline-none"
+              >
+                Download
               </button>
             </div>
 
