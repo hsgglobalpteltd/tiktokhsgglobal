@@ -253,11 +253,14 @@ export default function SettingPage() {
         const days = daysStr.split(",").filter(Boolean);
         const timeFrom = data.sync_time_from || "09:00";
         const timeTo = data.sync_time_to || "18:00";
+        const scale = data.awb_print_scale !== undefined ? String(data.awb_print_scale) : "100";
 
         setSyncInterval(interval);
         setSyncWorkingDays(days);
         setSyncTimeFrom(timeFrom);
         setSyncTimeTo(timeTo);
+        setAwbPrintScale(scale);
+        localStorage.setItem("awb_print_scale", scale);
 
         setInitialSyncInterval(interval);
         setInitialSyncWorkingDays(days);
@@ -1099,9 +1102,24 @@ pause`.trim();
                 <h2 className="section-title">AWB PDF Print Settings</h2>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     localStorage.setItem("awb_print_scale", awbPrintScale);
-                    showToast("AWB print settings saved successfully.");
+                    try {
+                      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ 
+                          awb_print_scale: Number(awbPrintScale)
+                        })
+                      });
+                      if (res.ok) {
+                        showToast("AWB print settings saved successfully.");
+                      } else {
+                        showToast("Failed to save settings to database.");
+                      }
+                    } catch (err) {
+                      showToast("Network error saving settings.");
+                    }
                   }}
                   className="btn-primary"
                   style={{ height: "36px" }}
