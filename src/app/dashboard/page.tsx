@@ -25,6 +25,10 @@ export default function DashboardPage() {
   const [monthOffsetOrders, setMonthOffsetOrders] = React.useState(0);
   const [monthOffsetRevenue, setMonthOffsetRevenue] = React.useState(0);
 
+  const [animationText, setAnimationText] = React.useState<string | null>(null);
+  const [animate, setAnimate] = React.useState(false);
+  const prevTodayCountRef = React.useRef<number | null>(null);
+
   const filteredOrders = React.useMemo(() => {
     return orders.filter(
       (o) => selectedShopId === "all" || o.shop_id === selectedShopId
@@ -173,6 +177,112 @@ export default function DashboardPage() {
       })
       .reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
   }, [filteredOrders, monthRangeRevenue]);
+
+  // Today Orders & Portion Stats Calculations
+  const todayRange = React.useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }, []);
+
+  const todayOrdersCount = React.useMemo(() => {
+    return filteredOrders.filter((o) => {
+      const ms = (o.create_time || 0) * 1000;
+      return ms >= todayRange.start.getTime() && ms <= todayRange.end.getTime();
+    }).length;
+  }, [filteredOrders, todayRange]);
+
+  const portionStats = React.useMemo(() => {
+    const currentHour = new Date().getHours();
+    const portionIndex = Math.floor(currentHour / 6);
+    const startHour = portionIndex * 6;
+    const endHour = (portionIndex + 1) * 6 - 1;
+    
+    const portionLabels = [
+      "12:00 AM - 6:00 AM",
+      "6:00 AM - 12:00 PM",
+      "12:00 PM - 6:00 PM",
+      "6:00 PM - 12:00 AM"
+    ];
+    const currentPortionLabel = portionLabels[portionIndex];
+
+    // Today's orders in this portion
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const todayPortionOrders = filteredOrders.filter((o) => {
+      const ms = (o.create_time || 0) * 1000;
+      if (ms < todayStart.getTime() || ms > todayEnd.getTime()) return false;
+      const hr = new Date(ms).getHours();
+      return hr >= startHour && hr <= endHour;
+    }).length;
+
+    // Calculate past 15 days portion average
+    let totalPastPortionOrders = 0;
+    for (let i = 1; i <= 15; i++) {
+      const pastDayStart = new Date(todayStart);
+      pastDayStart.setDate(todayStart.getDate() - i);
+      const pastDayEnd = new Date(pastDayStart);
+      pastDayEnd.setHours(23, 59, 59, 999);
+
+      const pastDayCount = filteredOrders.filter((o) => {
+        const ms = (o.create_time || 0) * 1000;
+        if (ms < pastDayStart.getTime() || ms > pastDayEnd.getTime()) return false;
+        const hr = new Date(ms).getHours();
+        return hr >= startHour && hr <= endHour;
+      }).length;
+
+      totalPastPortionOrders += pastDayCount;
+    }
+
+    const portionAverage = parseFloat((totalPastPortionOrders / 15).toFixed(1));
+    
+    let growthPercent = 0;
+    let growthDirection: "up" | "down" | "neutral" = "neutral";
+    
+    if (portionAverage > 0) {
+      const rawGrowth = ((todayPortionOrders - portionAverage) / portionAverage) * 100;
+      growthPercent = Math.round(rawGrowth);
+      if (growthPercent > 0) {
+        growthDirection = "up";
+      } else if (growthPercent < 0) {
+        growthDirection = "down";
+        growthPercent = Math.abs(growthPercent);
+      }
+    } else if (todayPortionOrders > 0) {
+      growthPercent = 100;
+      growthDirection = "up";
+    }
+
+    return {
+      label: currentPortionLabel,
+      average: portionAverage,
+      todayCount: todayPortionOrders,
+      growthPercent,
+      growthDirection
+    };
+  }, [filteredOrders]);
+
+  // Effect to trigger floating fade animation (+X) when todayOrdersCount increases
+  React.useEffect(() => {
+    if (prevTodayCountRef.current !== null) {
+      const diff = todayOrdersCount - prevTodayCountRef.current;
+      if (diff > 0) {
+        setAnimationText(`+${diff}`);
+        setAnimate(true);
+        const timer = setTimeout(() => {
+          setAnimate(false);
+          setAnimationText(null);
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+    prevTodayCountRef.current = todayOrdersCount;
+  }, [todayOrdersCount]);
 
   // Date Formatting Helpers
   const formatWeekText = (start: Date, end: Date) => {
@@ -470,51 +580,87 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Card 5: Total Gross Revenue */}
-              <div className="bg-white rounded-2xl border-2 border-emerald-100 p-6 flex flex-col justify-between hover:shadow-md transition duration-200">
+              {/* Card 5: Day Order Volume */}
+              <div className="bg-white rounded-2xl border border-zinc-200/80 p-6 flex flex-col justify-between hover:shadow-md transition duration-200 relative overflow-hidden">
+                <style>{`
+                  @keyframes floatFadeUp {
+                    0% {
+                      opacity: 0;
+                      transform: translateY(10px) scale(0.85);
+                    }
+                    15% {
+                      opacity: 1;
+                      transform: translateY(0) scale(1);
+                    }
+                    80% {
+                      opacity: 1;
+                      transform: translateY(-15px) scale(1);
+                    }
+                    100% {
+                      opacity: 0;
+                      transform: translateY(-25px) scale(0.9);
+                    }
+                  }
+                  .float-fade-up {
+                    animation: floatFadeUp 2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+                  }
+                `}</style>
+
                 <div className="flex justify-between items-start">
                   <div>
-                    <span className="metric-title block text-emerald-800">Tiktok Revenue</span>
-                    <span className="text-[10px] text-zinc-400 font-bold mt-1 block">GROSS TIKTOK SHOP REVENUE</span>
-                  </div>
-                  
-                  {/* Selector Controls */}
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setMonthOffsetRevenue(prev => prev - 1)}
-                      className="w-10 h-10 flex items-center justify-center bg-emerald-50 hover:bg-emerald-100 rounded-full transition text-emerald-700 active:scale-90 cursor-pointer"
-                      title="Previous Month"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
-                      </svg>
-                    </button>
-                    <button 
-                      onClick={() => setMonthOffsetRevenue(prev => Math.min(0, prev + 1))}
-                      disabled={monthOffsetRevenue >= 0}
-                      className={`w-10 h-10 flex items-center justify-center bg-emerald-50 hover:bg-emerald-100 rounded-full transition text-emerald-700 active:scale-90 cursor-pointer ${
-                        monthOffsetRevenue >= 0 ? "opacity-30 cursor-not-allowed pointer-events-none" : ""
-                      }`}
-                      title="Next Month"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
+                    <span className="metric-title block">Day Volume</span>
+                    <span className="text-[10px] text-zinc-400 font-bold mt-1 block">ORDERS CREATED TODAY</span>
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col items-center justify-center my-2">
-                  <span className="revenue-number text-emerald-600 text-center tracking-tight">
-                    {formatCurrency(monthlyRevenueSum)}
+                <div className="flex-1 flex flex-col items-center justify-center my-2 relative">
+                  <div className="relative flex items-center justify-center">
+                    <span className="metric-number text-zinc-800 text-center relative">
+                      {todayOrdersCount}
+                    </span>
+                    {animate && animationText && (
+                      <span className="absolute -right-8 -top-1.5 text-emerald-600 font-extrabold text-xs bg-emerald-50 border border-emerald-100 rounded-full px-1.5 py-0.5 shadow-sm float-fade-up z-20">
+                        {animationText}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-extrabold text-zinc-500 mt-1 uppercase bg-zinc-100 px-2 py-0.5 rounded">
+                    {new Date().toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" })}
                   </span>
-                  <span className="text-[10px] font-extrabold text-emerald-700 mt-2 uppercase bg-emerald-50 px-2.5 py-0.5 rounded">
-                    {formatMonthText(monthRangeRevenue.start)}
-                  </span>
+
+                  <div className="flex flex-col items-center gap-0.5 mt-2.5">
+                    <div className="flex items-center gap-1">
+                      {portionStats.growthDirection === "up" && (
+                        <span className="inline-flex items-center text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded">
+                          <svg className="w-2.5 h-2.5 mr-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                          </svg>
+                          +{portionStats.growthPercent}%
+                        </span>
+                      )}
+                      {portionStats.growthDirection === "down" && (
+                        <span className="inline-flex items-center text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded">
+                          <svg className="w-2.5 h-2.5 mr-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                          </svg>
+                          -{portionStats.growthPercent}%
+                        </span>
+                      )}
+                      {portionStats.growthDirection === "neutral" && (
+                        <span className="inline-flex items-center text-[10px] font-bold text-zinc-500 bg-zinc-100 border border-zinc-200 px-1.5 py-0.5 rounded">
+                          0% growth
+                        </span>
+                      )}
+                      <span className="text-[9px] text-zinc-400 font-medium">vs 15-day portion avg ({portionStats.average})</span>
+                    </div>
+                    <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider">
+                      Block: {portionStats.label}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="text-center text-xs font-bold text-emerald-700 uppercase tracking-wider">
-                  Month Sales
+                <div className="text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                  Day Orders
                 </div>
               </div>
 
