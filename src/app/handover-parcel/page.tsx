@@ -2,14 +2,14 @@
 
 import { TopBar } from "../../components/TopBar";
 
-export default function ScanHandoverPage() {
+export default function HandoverParcelPage() {
   const handleReload = () => {
     window.location.reload();
   };
 
   return (
     <div className="blank-route-page">
-      <TopBar title="Scan Handover" />
+      <TopBar title="Handover Parcel" />
       
       <button onClick={handleReload} className="gmail-reload-btn">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">

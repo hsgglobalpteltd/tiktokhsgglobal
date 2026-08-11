@@ -229,7 +229,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       "Dashboard": "/dashboard",
       "Orders": "/orders",
       "Scan Parcel": "/scan-parcel",
-      "Scan Handover": "/scan-handover",
+      "Handover Parcel": "/handover-parcel",
       "Setting": "/setting"
     };
 
