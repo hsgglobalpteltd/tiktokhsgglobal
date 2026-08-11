@@ -481,106 +481,10 @@ export default function DashboardPage() {
 
             </div>
 
-            {/* Row 2: Calendar Metrics (Week, Month, Revenue) */}
+            {/* Row 2: Calendar Metrics (Day, Week, Month) */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[48%] min-h-[220px]">
               
-              {/* Card 3: Weekly Order Volume */}
-              <div className="bg-white rounded-2xl border border-zinc-200/80 p-6 flex flex-col justify-between hover:shadow-md transition duration-200">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="metric-title block">Weekly Volume</span>
-                    <span className="text-[10px] text-zinc-400 font-bold mt-1 block">ORDERS CREATED THIS WEEK</span>
-                  </div>
-                  
-                  {/* Selector Controls */}
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setWeekOffset(prev => prev - 1)}
-                      className="w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer"
-                      title="Previous Week"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
-                      </svg>
-                    </button>
-                    <button 
-                      onClick={() => setWeekOffset(prev => Math.min(0, prev + 1))}
-                      disabled={weekOffset >= 0}
-                      className={`w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer ${
-                        weekOffset >= 0 ? "opacity-30 cursor-not-allowed pointer-events-none" : ""
-                      }`}
-                      title="Next Week"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex-1 flex flex-col items-center justify-center my-2">
-                  <span className="metric-number text-zinc-800 text-center">
-                    {weeklyOrdersCount}
-                  </span>
-                  <span className="text-[10px] font-extrabold text-zinc-500 mt-1 uppercase bg-zinc-100 px-2 py-0.5 rounded">
-                    {formatWeekText(weekRange.start, weekRange.end)}
-                  </span>
-                </div>
-
-                <div className="text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                  Week Orders
-                </div>
-              </div>
-
-              {/* Card 4: Monthly Order Volume */}
-              <div className="bg-white rounded-2xl border border-zinc-200/80 p-6 flex flex-col justify-between hover:shadow-md transition duration-200">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="metric-title block">Monthly Volume</span>
-                    <span className="text-[10px] text-zinc-400 font-bold mt-1 block">ORDERS CREATED THIS MONTH</span>
-                  </div>
-                  
-                  {/* Selector Controls */}
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setMonthOffsetOrders(prev => prev - 1)}
-                      className="w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer"
-                      title="Previous Month"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
-                      </svg>
-                    </button>
-                    <button 
-                      onClick={() => setMonthOffsetOrders(prev => Math.min(0, prev + 1))}
-                      disabled={monthOffsetOrders >= 0}
-                      className={`w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer ${
-                        monthOffsetOrders >= 0 ? "opacity-30 cursor-not-allowed pointer-events-none" : ""
-                      }`}
-                      title="Next Month"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex-1 flex flex-col items-center justify-center my-2">
-                  <span className="metric-number text-zinc-800 text-center">
-                    {monthlyOrdersCount}
-                  </span>
-                  <span className="text-[10px] font-extrabold text-zinc-500 mt-1 uppercase bg-zinc-100 px-2 py-0.5 rounded">
-                    {formatMonthText(monthRangeOrders.start)}
-                  </span>
-                </div>
-
-                <div className="text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                  Month Orders
-                </div>
-              </div>
-
-              {/* Card 5: Day Order Volume */}
+              {/* Card 3: Day Order Volume */}
               <div className="bg-white rounded-2xl border border-zinc-200/80 p-6 flex flex-col justify-between hover:shadow-md transition duration-200 relative overflow-hidden">
                 <style>{`
                   @keyframes floatFadeUp {
@@ -651,16 +555,111 @@ export default function DashboardPage() {
                           0% growth
                         </span>
                       )}
-                      <span className="text-[9px] text-zinc-400 font-medium">vs 15-day portion avg ({portionStats.average})</span>
                     </div>
-                    <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider">
-                      Block: {portionStats.label}
+                    <span className="text-[8px] font-extrabold text-zinc-500 uppercase tracking-wider mt-0.5">
+                      {portionStats.label}
                     </span>
                   </div>
                 </div>
 
                 <div className="text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
                   Day Orders
+                </div>
+              </div>
+
+              {/* Card 4: Weekly Order Volume */}
+              <div className="bg-white rounded-2xl border border-zinc-200/80 p-6 flex flex-col justify-between hover:shadow-md transition duration-200">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="metric-title block">Weekly Volume</span>
+                    <span className="text-[10px] text-zinc-400 font-bold mt-1 block">ORDERS CREATED THIS WEEK</span>
+                  </div>
+                  
+                  {/* Selector Controls */}
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setWeekOffset(prev => prev - 1)}
+                      className="w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer"
+                      title="Previous Week"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={() => setWeekOffset(prev => Math.min(0, prev + 1))}
+                      disabled={weekOffset >= 0}
+                      className={`w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer ${
+                        weekOffset >= 0 ? "opacity-30 cursor-not-allowed pointer-events-none" : ""
+                      }`}
+                      title="Next Week"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 flex flex-col items-center justify-center my-2">
+                  <span className="metric-number text-zinc-800 text-center">
+                    {weeklyOrdersCount}
+                  </span>
+                  <span className="text-[10px] font-extrabold text-zinc-500 mt-1 uppercase bg-zinc-100 px-2 py-0.5 rounded">
+                    {formatWeekText(weekRange.start, weekRange.end)}
+                  </span>
+                </div>
+
+                <div className="text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                  Week Orders
+                </div>
+              </div>
+
+              {/* Card 5: Monthly Order Volume */}
+              <div className="bg-white rounded-2xl border border-zinc-200/80 p-6 flex flex-col justify-between hover:shadow-md transition duration-200">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="metric-title block">Monthly Volume</span>
+                    <span className="text-[10px] text-zinc-400 font-bold mt-1 block">ORDERS CREATED THIS MONTH</span>
+                  </div>
+                  
+                  {/* Selector Controls */}
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setMonthOffsetOrders(prev => prev - 1)}
+                      className="w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer"
+                      title="Previous Month"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={() => setMonthOffsetOrders(prev => Math.min(0, prev + 1))}
+                      disabled={monthOffsetOrders >= 0}
+                      className={`w-10 h-10 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-full transition text-zinc-700 active:scale-90 cursor-pointer ${
+                        monthOffsetOrders >= 0 ? "opacity-30 cursor-not-allowed pointer-events-none" : ""
+                      }`}
+                      title="Next Month"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 flex flex-col items-center justify-center my-2">
+                  <span className="metric-number text-zinc-800 text-center">
+                    {monthlyOrdersCount}
+                  </span>
+                  <span className="text-[10px] font-extrabold text-zinc-500 mt-1 uppercase bg-zinc-100 px-2 py-0.5 rounded">
+                    {formatMonthText(monthRangeOrders.start)}
+                  </span>
+                </div>
+
+                <div className="text-center text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                  Month Orders
                 </div>
               </div>
 
