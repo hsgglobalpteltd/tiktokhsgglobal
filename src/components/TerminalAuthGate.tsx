@@ -4,7 +4,7 @@ import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { PDFDocument } from "pdf-lib";
 
-const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
+const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
 const triggerBlobDownload = (blob: Blob, filename: string) => {
   const url = window.URL.createObjectURL(blob);

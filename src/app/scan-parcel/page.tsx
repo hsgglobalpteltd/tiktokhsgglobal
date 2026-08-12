@@ -235,7 +235,7 @@ export default function ScanPackPage() {
         setIsLoading(true);
       }
       const activeOnlyParam = "&active_only=true";
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as { orders: any[]; shops?: any[] };
         setShops(data.shops || []);
@@ -270,7 +270,7 @@ export default function ScanPackPage() {
 
   const handleDownloadPendingList = async () => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/pending-tracking-ids");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/pending-tracking-ids");
       if (!res.ok) throw new Error("Failed to fetch pending list");
       const data = await res.json() as { success: boolean; tracking_ids: any[] };
       if (!data.success || !data.tracking_ids) throw new Error("Failed to retrieve checklist");
@@ -503,7 +503,7 @@ export default function ScanPackPage() {
   // R2 Uploader wrapper
   const uploadToStorage = async (blob: Blob, trackingId: string, mode: "before" | "after") => {
     const filename = `proof-${mode}-${trackingId}-${Date.now()}.jpg`;
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+    const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
       method: "POST",
       headers: {
         "Content-Type": "image/jpeg"
@@ -692,7 +692,7 @@ export default function ScanPackPage() {
 
         const base64Img = canvasEl.toDataURL("image/jpeg", 0.7).split(",")[1];
 
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
@@ -746,7 +746,7 @@ export default function ScanPackPage() {
     try {
       setIsUploading(true);
 
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -845,7 +845,7 @@ export default function ScanPackPage() {
       if (isAfter) {
         try {
           const base64Img = await blobToBase64(blob);
-          const valRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/validate-label", {
+          const valRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/validate-label", {
             method: "POST",
             headers: {
               "Content-Type": "application/json"
@@ -874,7 +874,7 @@ export default function ScanPackPage() {
       const photoUrl = await uploadToStorage(blob, order.tracking_number, cameraMode);
 
       // Call Backend pack endpoint
-      const updateRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
+      const updateRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -957,7 +957,7 @@ export default function ScanPackPage() {
       const base64Img = canvasEl.toDataURL("image/jpeg", 0.85).split(",")[1];
 
       // Call AI Scan endpoint
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
@@ -1034,7 +1034,7 @@ export default function ScanPackPage() {
     
     pollingIntervalRef.current = setInterval(async () => {
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&active_only=true&_t=" + Date.now(), { cache: "no-store" });
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&active_only=true&_t=" + Date.now(), { cache: "no-store" });
         if (res.ok) {
           const data = await res.json() as { orders: any[]; shops?: any[] };
           const currentOrders = data.orders || [];

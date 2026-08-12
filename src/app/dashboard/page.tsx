@@ -40,7 +40,7 @@ export default function DashboardPage() {
     if (!silent) setIsLoading(true);
     try {
       const activeOnlyParam = silent ? "&active_only=true" : "";
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, {
         cache: "no-store"
       });
       if (!res.ok) throw new Error(`HTTP Error ${res.status}`);

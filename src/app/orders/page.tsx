@@ -201,7 +201,7 @@ export default function OrdersPage() {
         setError(null);
       }
       const activeOnlyParam = silent ? "&active_only=true" : "";
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=${sync}${activeOnlyParam}&_t=${Date.now()}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=${sync}${activeOnlyParam}&_t=${Date.now()}`, {
         cache: "no-store"
       });
       if (!res.ok) {
@@ -291,7 +291,7 @@ export default function OrdersPage() {
       setError(null);
 
       // 1. Fetch from cache first (instant, no loading screen since orders already exist)
-      const resCache = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&_t=${Date.now()}`, {
+      const resCache = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&_t=${Date.now()}`, {
         cache: "no-store"
       });
       if (resCache.ok) {
@@ -305,7 +305,7 @@ export default function OrdersPage() {
 
       // 2. Perform live sync in the background (Quick Sync for the last 15 days only)
       const fifteenDaysAgo = Date.now() - 15 * 24 * 3600 * 1000;
-      const resSync = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&sync_start_date=${fifteenDaysAgo}&_t=${Date.now()}`, {
+      const resSync = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&sync_start_date=${fifteenDaysAgo}&_t=${Date.now()}`, {
         cache: "no-store"
       });
       if (!resSync.ok) {
@@ -353,7 +353,7 @@ export default function OrdersPage() {
     window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB", orderId } }));
     try {
       setAwbLoadingOrderId(orderId);
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/create-awb`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/create-awb`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -400,7 +400,7 @@ export default function OrdersPage() {
     }
     try {
       setAwbLoadingOrderId(orderId);
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(orderId)}&shop_id=${encodeURIComponent(shopId)}&action_by=${encodeURIComponent(terminalName)}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(orderId)}&shop_id=${encodeURIComponent(shopId)}&action_by=${encodeURIComponent(terminalName)}`, {
         method: "GET"
       });
 
@@ -412,7 +412,7 @@ export default function OrdersPage() {
       const data = await res.json() as any;
       if (data.success && data.doc_url) {
         showToast("Resizing AWB to A6...");
-        const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(data.doc_url)}`;
+        const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(data.doc_url)}`;
         const pdfRes = await fetch(proxyUrl);
         if (!pdfRes.ok) {
           throw new Error(`Failed to download PDF: ${pdfRes.status}`);
@@ -485,7 +485,7 @@ export default function OrdersPage() {
         // Upload print-pending combined/print AWB PDF directly to R2 bucket
         try {
           const pendingFilename = `TiktokAWBPrintPending/${filename}`;
-          const uploadPendingUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+          const uploadPendingUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
           await fetch(uploadPendingUrl, {
             method: "POST",
             headers: { "Content-Type": "application/pdf" },
@@ -508,7 +508,7 @@ export default function OrdersPage() {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
           
           const r2Filename = `Tiktok AWB/${cleanShopName}/${order.id}.pdf`;
-          const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          const uploadUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
           
           fetch(uploadUrl, {
             method: "POST",
@@ -560,7 +560,7 @@ export default function OrdersPage() {
         try {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
           if (order.awb_printed) {
-            const r2Url = `https://ib.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
+            const r2Url = `https://ib-v2.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
             docUrls.push(r2Url);
             saveFilesInfo.push({
               pdfUrl: r2Url,
@@ -570,7 +570,7 @@ export default function OrdersPage() {
               alreadyInR2: true
             });
           } else {
-            const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
+            const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
               method: "GET"
             });
 
@@ -622,7 +622,7 @@ export default function OrdersPage() {
             }
             pdfBytes = await pdfRes.arrayBuffer();
           } else {
-            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
+            const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
             const pdfRes = await fetch(proxyUrl);
             if (!pdfRes.ok) {
               throw new Error(`Failed to download PDF from proxy: ${pdfRes.status}`);
@@ -698,7 +698,7 @@ export default function OrdersPage() {
       // Upload print-pending combined/print AWB PDF directly to R2 bucket
       try {
         const pendingFilename = `TiktokAWBPrintPending/${filename}`;
-        const uploadPendingUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+        const uploadPendingUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
         await fetch(uploadPendingUrl, {
           method: "POST",
           headers: { "Content-Type": "application/pdf" },
@@ -725,7 +725,7 @@ export default function OrdersPage() {
           if (file.pdfBytes) {
             fileData = file.pdfBytes;
           } else if (file.pdfUrl) {
-            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
             const fileRes = await fetch(proxyUrl);
             fileData = await fileRes.arrayBuffer();
           } else {
@@ -735,7 +735,7 @@ export default function OrdersPage() {
           const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
           
           const r2Filename = `Tiktok AWB/${cleanShopName}/${file.orderId}.pdf`;
-          const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          const uploadUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
           
           fetch(uploadUrl, {
             method: "POST",
@@ -816,7 +816,7 @@ export default function OrdersPage() {
         try {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
           if (order.awb_printed) {
-            const r2Url = `https://ib.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
+            const r2Url = `https://ib-v2.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
             docUrls.push(r2Url);
             saveFilesInfo.push({
               pdfUrl: r2Url,
@@ -826,7 +826,7 @@ export default function OrdersPage() {
               alreadyInR2: true
             });
           } else {
-            const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
+            const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
               method: "GET"
             });
 
@@ -875,7 +875,7 @@ export default function OrdersPage() {
             }
             pdfBytes = await pdfRes.arrayBuffer();
           } else {
-            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
+            const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(docUrl)}`;
             const pdfRes = await fetch(proxyUrl);
             if (!pdfRes.ok) {
               throw new Error(`Failed to download PDF from proxy: ${pdfRes.status}`);
@@ -919,7 +919,7 @@ export default function OrdersPage() {
           if (file.pdfBytes) {
             fileData = file.pdfBytes;
           } else if (file.pdfUrl) {
-            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
             const fileRes = await fetch(proxyUrl);
             fileData = await fileRes.arrayBuffer();
           } else {
@@ -928,7 +928,7 @@ export default function OrdersPage() {
 
           const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
           const r2Filename = `Tiktok AWB/${cleanShopName}/${file.orderId}.pdf`;
-          const uploadUrl = `https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          const uploadUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(r2Filename)}`;
           
           fetch(uploadUrl, {
             method: "POST",
@@ -1169,7 +1169,7 @@ export default function OrdersPage() {
     }));
 
     try {
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/update-issues`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/update-issues`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1683,7 +1683,7 @@ export default function OrdersPage() {
                               <div className="flex items-center gap-2">
                                 {order.awb_printed ? (
                                   <a
-                                    href={`https://ib.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent((order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim())}/${encodeURIComponent(order.id)}.pdf`}
+                                    href={`https://ib-v2.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent((order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim())}/${encodeURIComponent(order.id)}.pdf`}
                                     target="_blank"
                                     rel="noreferrer"
                                     title="View / Download AWB from Secure Storage"

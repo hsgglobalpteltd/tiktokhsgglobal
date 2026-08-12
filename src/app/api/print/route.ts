@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
           if (file.pdfBase64) {
             fileBuffer = Buffer.from(file.pdfBase64, "base64");
           } else if (file.pdfUrl) {
-            const proxyUrl = `https://ib.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
             const fileRes = await fetch(proxyUrl);
             if (fileRes.ok) {
               const ab = await fileRes.arrayBuffer();

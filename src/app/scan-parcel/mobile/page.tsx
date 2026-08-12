@@ -63,7 +63,7 @@ function MobileScannerPageContent() {
   // R2 Uploader wrapper
   const uploadToStorage = async (blob: Blob, trackingId: string) => {
     const filename = `proof-${mode}-${trackingId}-${Date.now()}.jpg`;
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+    const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
       method: "POST",
       headers: { "Content-Type": "image/jpeg" },
       body: blob
@@ -92,7 +92,7 @@ function MobileScannerPageContent() {
       // AI Gemini Label Stuck Validation (Only for Shipping Proof / after mode)
       if (mode === "after") {
         const base64Img = await blobToBase64(blob);
-        const valRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/validate-label", {
+        const valRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/validate-label", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
@@ -114,7 +114,7 @@ function MobileScannerPageContent() {
       const photoUrl = await uploadToStorage(blob, barcode);
 
       // Submit pack update to backend worker
-      const updateRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
+      const updateRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -165,7 +165,7 @@ function MobileScannerPageContent() {
       const base64Img = canvasEl.toDataURL("image/jpeg", 0.85).split(",")[1];
 
       // Call AI Scan endpoint
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
@@ -317,7 +317,7 @@ function MobileScannerPageContent() {
 
         const base64Img = canvasEl.toDataURL("image/jpeg", 0.7).split(",")[1];
 
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })

@@ -188,7 +188,7 @@ export default function SettingPage() {
       const startMs = start.getTime();
       const endMs = end.getTime();
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&shop_id=${histShopId}&sync_start_date=${startMs}&sync_end_date=${endMs}&_t=${Date.now()}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=true&shop_id=${histShopId}&sync_start_date=${startMs}&sync_end_date=${endMs}&_t=${Date.now()}`, {
         cache: "no-store"
       });
 
@@ -242,7 +242,7 @@ export default function SettingPage() {
   const fetchKeys = async () => {
     try {
       setIsLoadingKeys(true);
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/settings?_t=" + Date.now(), { cache: "no-store" });
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/settings?_t=" + Date.now(), { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as any;
         setAppKey(data.app_key || "");
@@ -277,7 +277,7 @@ export default function SettingPage() {
   const fetchStatus = async () => {
     try {
       setIsLoadingStatus(true);
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/auth/status?_t=" + Date.now(), { cache: "no-store" });
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/auth/status?_t=" + Date.now(), { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as ConnectionStatus;
         setStatus(data);
@@ -292,7 +292,7 @@ export default function SettingPage() {
   const fetchScopes = async () => {
     try {
       setIsCheckingScopes(true);
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/auth/check-scopes?_t=" + Date.now(), { cache: "no-store" });
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/auth/check-scopes?_t=" + Date.now(), { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as ScopesCheckResult;
         setScopesCheck(data);
@@ -308,7 +308,7 @@ export default function SettingPage() {
     e.preventDefault();
     try {
       setIsSaving(true);
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -335,7 +335,7 @@ export default function SettingPage() {
     e.preventDefault();
     try {
       setIsSavingSync(true);
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -392,9 +392,9 @@ export default function SettingPage() {
     localStorage.setItem("archive_folder_path", archiveFolder);
     localStorage.setItem("sumatra_path", sumatraPath);
 
-    const targetUrl = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobalpteltd.workers.dev";
+    const targetUrl = typeof window !== "undefined" ? window.location.origin : "https://ib-v2.hsgglobalpteltd.workers.dev";
     // Standardize backend URL to avoid local origin confusion
-    const backendUrl = "https://ib.hsgglobalpteltd.workers.dev";
+    const backendUrl = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
     const ps1Content = `
 $baseUrl = "${backendUrl}"
@@ -669,7 +669,7 @@ pause`.trim();
 
   const handleUpdateSyncStartDate = async (shopId: string, timestamp: number) => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -1105,7 +1105,7 @@ pause`.trim();
                   onClick={async () => {
                     localStorage.setItem("awb_print_scale", awbPrintScale);
                     try {
-                      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
+                      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/settings", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ 
@@ -1314,7 +1314,7 @@ pause`.trim();
                 <p className="helper-note">
                   Opens the official partner authentication portal. Make sure your redirect URI is set to: <br/>
                   <code className="helper-code">
-                    https://ib.hsgglobalpteltd.workers.dev/api/tiktok/auth/callback
+                    https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/auth/callback
                   </code>
                 </p>
               </div>

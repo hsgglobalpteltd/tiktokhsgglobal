@@ -136,7 +136,7 @@ export default function HandoverParcelPage() {
   const fetchOrders = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&active_only=true&_t=" + Date.now(), { cache: "no-store" });
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&active_only=true&_t=" + Date.now(), { cache: "no-store" });
       if (res.ok) {
         const data = await res.json() as { orders: any[] };
         setOrders(data.orders || []);
@@ -220,7 +220,7 @@ export default function HandoverParcelPage() {
 
     try {
       setIsDownloadingAWB(true);
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/merge-awb", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/merge-awb", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -371,7 +371,7 @@ export default function HandoverParcelPage() {
       setIsSubmitting(true);
       const driverLabel = modalMode === "Pickup" ? "Courier Pickup" : "Drop-Off";
 
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/tiktok/orders/handover", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/handover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
