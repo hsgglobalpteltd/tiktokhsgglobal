@@ -410,10 +410,16 @@ export default function HandoverParcelPage() {
     const batchesMap = new Map<string, HandoverBatch>();
 
     orders.forEach(order => {
-      let logsArray = [];
-      try {
-        logsArray = JSON.parse(order.logs || "[]");
-      } catch {}
+      let logsArray: any[] = [];
+      if (order.logs) {
+        if (Array.isArray(order.logs)) {
+          logsArray = order.logs;
+        } else if (typeof order.logs === "string") {
+          try {
+            logsArray = JSON.parse(order.logs);
+          } catch {}
+        }
+      }
 
       if (!Array.isArray(logsArray)) return;
 
