@@ -405,6 +405,149 @@ export default function HandoverParcelPage() {
     }
   };
 
+  // Download Merged AWB PDF for a past Batch
+  const handleDownloadAWBForBatch = async (batch: HandoverBatch) => {
+    try {
+      showToast("Compiling AWBs from Secure Storage...");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/merge-awb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orders: batch.orders.map(o => ({ id: o.id, shop_id: "" }))
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json() as { success: boolean; url?: string };
+        if (data.success && data.url) {
+          window.open(data.url, "_blank");
+          showToast("Merged AWB PDF downloaded!");
+        } else {
+          showToast("Failed to compile AWBs.");
+        }
+      } else {
+        const err = await res.json() as { error?: string };
+        showToast("Error compiles AWB: " + (err.error || "Unknown Error"));
+      }
+    } catch (err: any) {
+      showToast("Error compiles AWB: " + err.message);
+    }
+  };
+
+  // Download Handover List PDF (Drop List) for a past Batch
+  const handleDownloadDropListForBatch = async (batch: HandoverBatch) => {
+    try {
+      const { PDFDocument, rgb, StandardFonts } = await import("pdf-lib");
+      const pdfDoc = await PDFDocument.create();
+      
+      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const courierFont = await pdfDoc.embedFont(StandardFonts.Courier);
+      
+      const printTime = new Date(batch.timestamp).toLocaleString("en-SG", { timeZone: "Asia/Singapore" });
+      
+      const drawHeader = (pageObj: any, pageNum: number, totalPages: number) => {
+        pageObj.drawText("TikTok Handover Drop List", { x: 40, y: 800, size: 18, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        pageObj.drawText(`Courier: ${batch.courier} | Type: ${batch.type} | Total: ${batch.orders.length} parcels`, { x: 40, y: 780, size: 10, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        
+        pageObj.drawText(`Handover Date/Time: ${printTime}`, { x: 380, y: 800, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        pageObj.drawText(`Printed By: ${terminalName}`, { x: 380, y: 785, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        pageObj.drawText(`Page ${pageNum} of ${totalPages}`, { x: 380, y: 770, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        
+        pageObj.drawRectangle({
+          x: 40,
+          y: 730,
+          width: 515,
+          height: 20,
+          color: rgb(0.95, 0.95, 0.96),
+          borderColor: rgb(0.75, 0.76, 0.78),
+          borderWidth: 1
+        });
+        
+        pageObj.drawText("Order ID", { x: 48, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        pageObj.drawText("Tracking Number", { x: 248, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+        pageObj.drawText("Collect", { x: 505, y: 736, size: 9, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
+      };
+      
+      const drawFooter = (pageObj: any) => {
+        pageObj.drawLine({ start: { x: 40, y: 55 }, end: { x: 555, y: 55 }, color: rgb(0.85, 0.85, 0.86), thickness: 0.5 });
+        pageObj.drawText("* Please verify that all listed parcels are physically loaded into the vehicle for dispatch.", {
+          x: 40,
+          y: 40,
+          size: 7.5,
+          font: helveticaBold,
+          color: rgb(0.37, 0.39, 0.41)
+        });
+      };
+      
+      const rowsPerPage = 23;
+      const totalPages = Math.max(1, Math.ceil(batch.orders.length / rowsPerPage));
+      
+      let page = pdfDoc.addPage([595.28, 841.89]);
+      drawHeader(page, 1, totalPages);
+      drawFooter(page);
+      
+      let currentY = 710;
+      let countOnPage = 0;
+      let currentPageNum = 1;
+      
+      for (let i = 0; i < batch.orders.length; i++) {
+        if (countOnPage >= rowsPerPage) {
+          page = pdfDoc.addPage([595.28, 841.89]);
+          currentPageNum++;
+          drawHeader(page, currentPageNum, totalPages);
+          drawFooter(page);
+          currentY = 710;
+          countOnPage = 0;
+        }
+        
+        const item = batch.orders[i];
+        const id = item.id || "";
+        const tracking = item.tracking_number || "-";
+        
+        page.drawRectangle({
+          x: 40,
+          y: currentY,
+          width: 515,
+          height: 20,
+          borderColor: rgb(0.75, 0.76, 0.78),
+          borderWidth: 1
+        });
+        
+        page.drawLine({ start: { x: 240, y: currentY }, end: { x: 240, y: currentY + 20 }, color: rgb(0.75, 0.76, 0.78), thickness: 1 });
+        page.drawLine({ start: { x: 490, y: currentY }, end: { x: 490, y: currentY + 20 }, color: rgb(0.75, 0.76, 0.78), thickness: 1 });
+        
+        page.drawText(id, { 
+          x: 48, 
+          y: currentY + 6, 
+          size: 8, 
+          font: courierFont, 
+          color: rgb(0.12, 0.12, 0.12) 
+        });
+        page.drawText(tracking, { x: 248, y: currentY + 6, size: 8, font: courierFont, color: rgb(0.12, 0.12, 0.12) });
+        
+        currentY -= 20;
+        countOnPage++;
+      }
+      
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes as any], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      const dateStr = new Date(batch.timestamp).toLocaleDateString("en-SG").replace(/\//g, "-");
+      link.setAttribute("download", `TikTok_Handover_DropList_${batch.courier.replace(/\s+/g, '_')}_${dateStr}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      showToast("Handover List PDF downloaded!");
+    } catch (err: any) {
+      alert("Error generating Handover List PDF: " + err.message);
+    }
+  };
+
   // Derive Handover Batches History from orders logs
   const handoverHistory = useMemo(() => {
     const batchesMap = new Map<string, HandoverBatch>();
@@ -646,27 +789,27 @@ export default function HandoverParcelPage() {
             </div>
 
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-left border-collapse text-xs font-medium">
+              <table className="w-full text-left border-collapse text-xs table-fixed">
                 <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-200 text-[10px] font-black text-zinc-500 uppercase tracking-wider select-none sticky top-0 z-10">
-                    <th className="px-6 py-3">Timestamp / Date</th>
-                    <th className="px-6 py-3">Courier</th>
-                    <th className="px-6 py-3">Handover Type</th>
-                    <th className="px-6 py-3 text-center">Total Parcels</th>
-                    <th className="px-6 py-3 text-right">Actions</th>
+                  <tr className="select-none">
+                    <th className="p-3 font-semibold text-[#1F1F1F] w-[26%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Timestamp / Date</th>
+                    <th className="p-3 font-semibold text-[#1F1F1F] w-[20%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Courier</th>
+                    <th className="p-3 font-semibold text-[#1F1F1F] w-[18%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Handover Type</th>
+                    <th className="p-3 font-semibold text-[#1F1F1F] w-[14%] text-center sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Total Parcels</th>
+                    <th className="p-3 font-semibold text-[#1F1F1F] w-[22%] text-right sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-150 text-zinc-700">
+                <tbody className="divide-y divide-[#E0E2E6]">
                   {paginatedHistory.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="text-center py-20 text-zinc-450 font-bold">
+                      <td colSpan={5} className="text-center py-20 text-[#5F6368] italic font-medium">
                         No handover records matching the query were found.
                       </td>
                     </tr>
                   ) : (
                     paginatedHistory.map((batch) => (
-                      <tr key={batch.id} className="hover:bg-zinc-50/50 transition">
-                        <td className="px-6 py-3 font-mono font-bold">
+                      <tr key={batch.id} className="hover:bg-[#F8F9FA] border-b border-[#E0E2E6] transition text-[#1F1F1F] font-medium">
+                        <td className="p-3 text-[#1F1F1F] font-medium">
                           {new Date(batch.timestamp).toLocaleString("en-SG", {
                             day: "2-digit",
                             month: "short",
@@ -676,37 +819,38 @@ export default function HandoverParcelPage() {
                             hour12: true
                           })}
                         </td>
-                        <td className="px-6 py-3">
-                          <span className="bg-zinc-100 text-zinc-800 font-bold px-2 py-0.5 rounded uppercase text-[10px] tracking-wide">
+                        <td className="p-3">
+                          <span className="bg-[#F1F3F4] text-[#3C4043] border border-[#E0E2E6] px-2 py-0.5 rounded uppercase text-[11px] font-semibold tracking-wide">
                             {batch.courier}
                           </span>
                         </td>
-                        <td className="px-6 py-3">
-                          <span className={`inline-flex items-center gap-1 font-bold text-[10px] px-2 py-0.5 rounded ${
+                        <td className="p-3">
+                          <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border ${
                             batch.type === "Manual" 
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-100" 
-                              : "bg-blue-50 text-blue-700 border border-blue-100"
+                              ? "bg-[#E6F4EA] text-[#137333] border-[#CEEAD6]" 
+                              : "bg-[#E8F0FE] text-[#1A73E8] border-[#D2E3FC]"
                           }`}>
                             {batch.type}
                           </span>
                         </td>
-                        <td className="px-6 py-3 text-center font-bold text-zinc-700">
+                        <td className="p-3 text-center font-semibold text-[#1F1F1F]">
                           {batch.orders.length}
                         </td>
-                        <td className="px-6 py-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => handleCopyTrackingIds(batch)}
-                              className="px-2 py-1 border border-zinc-300 hover:border-zinc-400 text-zinc-655 rounded text-[10px] font-black cursor-pointer active:scale-95 transition"
-                              title="Copy all tracking numbers to clipboard"
+                              onClick={() => handleDownloadAWBForBatch(batch)}
+                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center gap-1 h-[28px] bg-white text-[#1F1F1F] border-[#E0E2E6] hover:bg-[#F8F9FA] active:scale-95"
+                              title="Download merged AWB PDF document"
                             >
-                              Copy Tracking
+                              Download AWB
                             </button>
                             <button
-                              onClick={() => setSelectedBatch(batch)}
-                              className="px-2.5 py-1 bg-zinc-900 text-white hover:bg-zinc-800 rounded text-[10px] font-black cursor-pointer active:scale-95 transition"
+                              onClick={() => handleDownloadDropListForBatch(batch)}
+                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center gap-1 h-[28px] bg-[#1F1F1F] text-white hover:bg-zinc-800 active:scale-95"
+                              title="Download handover drop list PDF checklist"
                             >
-                              View Manifest
+                              Download Handover List
                             </button>
                           </div>
                         </td>
