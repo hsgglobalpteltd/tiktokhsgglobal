@@ -840,17 +840,21 @@ export default function HandoverParcelPage() {
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => handleDownloadAWBForBatch(batch)}
-                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center gap-1 h-[28px] bg-white text-[#1F1F1F] border-[#E0E2E6] hover:bg-[#F8F9FA] active:scale-95"
-                              title="Download merged AWB PDF document"
+                              className="w-[28px] h-[28px] rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center bg-white text-[#5F6368] border-[#E0E2E6] hover:bg-[#F8F9FA] hover:text-[#1F1F1F] active:scale-95"
+                              title="Download AWB"
                             >
-                              Download AWB
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              </svg>
                             </button>
                             <button
                               onClick={() => handleDownloadDropListForBatch(batch)}
-                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center gap-1 h-[28px] bg-[#1F1F1F] text-white hover:bg-zinc-800 active:scale-95"
-                              title="Download handover drop list PDF checklist"
+                              className="w-[28px] h-[28px] rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center bg-white text-[#5F6368] border-[#E0E2E6] hover:bg-[#F8F9FA] hover:text-[#1F1F1F] active:scale-95"
+                              title="Download Handover List"
                             >
-                              Download Handover List
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                              </svg>
                             </button>
                           </div>
                         </td>

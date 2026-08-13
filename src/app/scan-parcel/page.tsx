@@ -48,8 +48,6 @@ export default function ScanPackPage() {
   const [orders, setOrders] = React.useState<Order[]>([]);
   const [shops, setShops] = React.useState<{ id: string; name: string }[]>([]);
   const [scannedItems, setScannedItems] = React.useState<ScannedItem[]>([]);
-  const [batchId, setBatchId] = React.useState<string>("");
-  const [batchStartTime, setBatchStartTime] = React.useState<number>(0);
   
   const [selectedShopId, setSelectedShopId] = React.useState<string>("all");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
@@ -63,9 +61,7 @@ export default function ScanPackPage() {
 
   const [isOptionsOpen, setIsOptionsOpen] = React.useState(false);
   const [isSelectionOpen, setIsSelectionOpen] = React.useState(false);
-  const [isCameraOpen, setIsCameraOpen] = React.useState(false);
   const [cameraMode, setCameraMode] = React.useState<"before" | "after">("before");
-  const [cameraError, setCameraError] = React.useState<string | null>(null);
   const pollingIntervalRef = React.useRef<any>(null);
   
   // Repack Confirmation Dialog State
@@ -81,10 +77,6 @@ export default function ScanPackPage() {
     type: "before" | "after";
   } | null>(null);
 
-  // Manual Input State
-  const [manualInputCode, setManualInputCode] = React.useState("");
-  const [manualFile, setManualFile] = React.useState<File | null>(null);
-  const [isUploading, setIsUploading] = React.useState(false);
   const [terminalName, setTerminalName] = React.useState("PC Office");
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -101,13 +93,7 @@ export default function ScanPackPage() {
   const [selectedCourierFilter, setSelectedCourierFilter] = React.useState("All");
   const [rawPendingTrackingIds, setRawPendingTrackingIds] = React.useState<any[]>([]);
 
-  // Inactivity countdown state (60 seconds)
-  const [inactivityCountdown, setInactivityCountdown] = React.useState(60);
 
-  // References for camera capture
-  const videoRef = React.useRef<HTMLVideoElement | null>(null);
-  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Memoized counts for each status tab to match Orders page layout
   const counts = React.useMemo(() => {
@@ -201,11 +187,8 @@ export default function ScanPackPage() {
       setSelectedOrderIds(new Set(displayedOrders.map(o => o.id)));
     }
   };
-  // Initialize Batch ID and load orders list
+  // Load orders list
   React.useEffect(() => {
-    const now = Date.now();
-    setBatchId("BATCH_" + now.toString(36).toUpperCase());
-    setBatchStartTime(now);
     fetchOrders(false);
 
     const interval = setInterval(() => {
@@ -517,209 +500,7 @@ export default function ScanPackPage() {
     return data.url;
   };
 
-  // Close camera scan window
-  const closeCamera = () => {
-    setIsCameraOpen(false);
-    setCameraError(null);
-  };
-
-  // Reset inactivity timer on active operations/interactions
-  const resetInactivityTimer = () => {
-    setInactivityCountdown(60);
-  };
-
-  // Monitor 60 seconds inactivity loop
-  React.useEffect(() => {
-    if (!isCameraOpen) return;
-
-    setInactivityCountdown(60);
-    const interval = setInterval(() => {
-      setInactivityCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          closeCamera();
-          showToast("Scan window closed due to inactivity");
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [isCameraOpen]);
-
-  // Camera stream initialization loop (No client-side zxing barcode reader)
-  React.useEffect(() => {
-    if (!isCameraOpen) return;
-
-    let active = true;
-    let localStream: MediaStream | null = null;
-
-    const stopAllTracks = () => {
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          try {
-            track.stop();
-          } catch (e) {
-            console.error("Failed to stop track:", e);
-          }
-        });
-        localStream = null;
-      }
-    };
-
-    const startScanner = async () => {
-      try {
-        // 1. Get back/rear camera ID if available, or fall back to environment mode
-        let constraints: MediaStreamConstraints = {
-          video: { 
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        };
-
-        try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoDevices = devices.filter(device => device.kind === "videoinput");
-          if (videoDevices.length > 0) {
-            const backCamera = videoDevices.filter(device => 
-              device.label.toLowerCase().includes("back") || 
-              device.label.toLowerCase().includes("rear") ||
-              device.label.toLowerCase().includes("environment") ||
-              device.label.toLowerCase().includes("dir 0")
-            );
-            // Use the last camera in the list (usually the highest resolution/back camera)
-            if (backCamera.length > 0) {
-              constraints = {
-                video: { 
-                  deviceId: { ideal: backCamera[backCamera.length - 1].deviceId },
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 }
-                },
-                audio: false
-              };
-            } else {
-              constraints = {
-                video: { 
-                  deviceId: { ideal: videoDevices[videoDevices.length - 1].deviceId },
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 }
-                },
-                audio: false
-              };
-            }
-          }
-        } catch (deviceErr) {
-          console.warn("Failed to enumerate devices, falling back to environment mode:", deviceErr);
-        }
-
-        // 2. Open camera stream with progressive fallbacks
-        try {
-          localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (firstErr) {
-          console.warn("Failed to start video source with deviceId constraints, trying facingMode:", firstErr);
-          try {
-            localStream = await navigator.mediaDevices.getUserMedia({
-              video: { 
-                facingMode: "environment",
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-              },
-              audio: false
-            });
-          } catch (secondErr) {
-            console.warn("Failed to start video source with facingMode, trying raw video option:", secondErr);
-            localStream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-              },
-              audio: false
-            });
-          }
-        }
-
-        if (!active) {
-          stopAllTracks();
-          return;
-        }
-
-        // 3. Bind stream to native video element
-        if (videoRef.current) {
-          videoRef.current.srcObject = localStream;
-          videoRef.current.setAttribute("playsinline", "true");
-          videoRef.current.setAttribute("autoplay", "true");
-          videoRef.current.setAttribute("muted", "true");
-          await videoRef.current.play();
-        }
-
-      } catch (err: any) {
-        console.error("Camera startup error:", err);
-        setCameraError("Failed to initiate camera. Please check permissions or use manual scan.");
-      }
-    };
-
-    // Wait a tiny tick for DOM elements to mount
-    const timer = setTimeout(() => {
-      startScanner();
-    }, 120);
-
-    return () => {
-      active = false;
-      clearTimeout(timer);
-      stopAllTracks();
-    };
-  }, [isCameraOpen]);
-
-  // Background silent auto-scan loop
-  React.useEffect(() => {
-    if (!isCameraOpen) return;
-
-    const interval = setInterval(async () => {
-      if (isUploading || repackConfirmData || isOptionsOpen) return;
-
-      const videoEl = videoRef.current;
-      const canvasEl = canvasRef.current;
-      if (!videoEl || !canvasEl) return;
-
-      try {
-        canvasEl.width = videoEl.videoWidth || 1280;
-        canvasEl.height = videoEl.videoHeight || 720;
-        const ctx = canvasEl.getContext("2d");
-        ctx?.drawImage(videoEl, 0, 0);
-
-        const base64Img = canvasEl.toDataURL("image/jpeg", 0.7).split(",")[1];
-
-        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
-        });
-
-        if (res.ok) {
-          const scanResult = await res.json() as { success: boolean; tracking_number: string | null; stuck: boolean };
-          if (scanResult.success && scanResult.tracking_number) {
-            if (cameraMode === "after" && !scanResult.stuck) {
-              return; // Ignore if label not stuck
-            }
-
-            playBeep();
-            canvasEl.toBlob(async (blob) => {
-              if (blob) {
-                await handleScannedCode(scanResult.tracking_number!, blob);
-              }
-            }, "image/jpeg", 0.85);
-          }
-        }
-      } catch (err) {
-        console.warn("Background auto-scan warning:", err);
-      }
-    }, 2800);
-
-    return () => clearInterval(interval);
-  }, [isCameraOpen, isUploading, cameraMode, repackConfirmData, isOptionsOpen]);
+  // Camera scan functions removed per user preferences.
 
   // Convert blob to base64 string helper
   const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -744,8 +525,6 @@ export default function ScanPackPage() {
   const executeResetPhoto = async (orderId: string, type: "before" | "after") => {
     setResetConfirmData(null);
     try {
-      setIsUploading(true);
-
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -800,19 +579,22 @@ export default function ScanPackPage() {
       console.error(err);
       playErrorBeep();
       showToast(err.message || "Failed to reset photo.");
-    } finally {
-      setIsUploading(false);
     }
   };
 
   // Main code processing function
   const handleScannedCode = async (barcode: string, blob: Blob, forceRepack: boolean = false) => {
-    resetInactivityTimer();
     
     // Find matching order in active list
     const order = orders.find(o => o.tracking_number === barcode || o.id === barcode);
     if (!order) {
       showToast(`Order not found for tracking: ${barcode}`);
+      return;
+    }
+
+    if (order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+      playErrorBeep();
+      showToast("Scan ignored: Cannot process Unpaid order!");
       return;
     }
 
@@ -839,8 +621,6 @@ export default function ScanPackPage() {
 
     // Proceed to upload and status mapping
     try {
-      setIsUploading(true);
-
       // AI Gemini Label Stuck Validation (Only for Shipping Proof / After Pack)
       if (isAfter) {
         try {
@@ -860,7 +640,6 @@ export default function ScanPackPage() {
             const valJson = await valRes.json() as { success: boolean; stuck: boolean };
             if (valJson.success && !valJson.stuck) {
               showToast("Scan ignored: Label must be stuck on the parcel, box, or plastic!");
-              closeCamera();
               return;
             }
           } else {
@@ -928,101 +707,16 @@ export default function ScanPackPage() {
       });
 
       showToast(`${isAfter ? "After-Pack" : "Before-Pack"} saved for ${order.id}`);
-      closeCamera();
 
     } catch (err: any) {
       console.error(err);
       showToast(`Upload Error: ${err.message}`);
-    } finally {
-      setIsUploading(false);
     }
   };
 
-  // Capture current camera video frame and send to Gemini API for AI decoding
-  const captureAndAIScan = async () => {
-    const videoEl = videoRef.current;
-    const canvasEl = canvasRef.current;
-    if (!videoEl || !canvasEl) return;
 
-    try {
-      setIsUploading(true);
-      
-      // Capture frame
-      canvasEl.width = videoEl.videoWidth || 1280;
-      canvasEl.height = videoEl.videoHeight || 720;
-      const ctx = canvasEl.getContext("2d");
-      ctx?.drawImage(videoEl, 0, 0);
 
-      // Convert canvas to base64
-      const base64Img = canvasEl.toDataURL("image/jpeg", 0.85).split(",")[1];
 
-      // Call AI Scan endpoint
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/ai-scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64Img, mime_type: "image/jpeg" })
-      });
-
-      if (!res.ok) {
-        throw new Error("Failed to process image with AI decoder");
-      }
-
-      const scanResult = await res.json() as { success: boolean; tracking_number: string | null; stuck: boolean };
-      
-      if (!scanResult.success || !scanResult.tracking_number) {
-        playErrorBeep();
-        showToast("AI Scan failed: No courier barcode detected in frame. Align label and try again.");
-        return;
-      }
-
-      // If Shipping Proof (after mode) and label is not stuck, reject it
-      if (cameraMode === "after" && !scanResult.stuck) {
-        playErrorBeep();
-        showToast("Scan ignored: Label must be stuck on the parcel package!");
-        return;
-      }
-
-      // Valid barcode found! Play success beep
-      playBeep();
-
-      // Convert canvas to Blob for final storage upload
-      canvasEl.toBlob(async (blob) => {
-        if (blob) {
-          await handleScannedCode(scanResult.tracking_number!, blob);
-        }
-      }, "image/jpeg", 0.85);
-
-    } catch (err: any) {
-      console.error(err);
-      playErrorBeep();
-      showToast(err.message || "Decoding error. Please retry.");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  // Trigger manual entry form submit
-  const handleManualSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualInputCode.trim()) return;
-
-    if (!manualFile) {
-      showToast("Please snap or select a proof photo file");
-      return;
-    }
-
-    try {
-      setIsUploading(true);
-      await handleScannedCode(manualInputCode.trim(), manualFile);
-      setManualInputCode("");
-      setManualFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsUploading(false);
-    }
-  };
 
   const openScanOptions = () => {
     setIsOptionsOpen(true);

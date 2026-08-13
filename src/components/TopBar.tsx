@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 
 interface TopBarProps {
   title: string;
@@ -54,11 +53,11 @@ export function TopBar({ title }: TopBarProps) {
         </button>
 
         {/* Windows-style Close Button */}
-        <Link href="/" className="win-btn win-btn-close" title="Close">
+        <a href="/" className="win-btn win-btn-close" title="Close">
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" xmlns="http://www.w3.org/2000/svg">
             <path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" />
           </svg>
-        </Link>
+        </a>
       </div>
     </div>
   );

@@ -350,6 +350,11 @@ export default function OrdersPage() {
 
   const handleCreateAWB = async (orderId: string, shopId: string) => {
     if (awbLoadingOrderId) return;
+    const order = orders.find(o => o.id === orderId);
+    if (order && order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+      showToast("Cannot create AWB for Unpaid orders!");
+      return;
+    }
     window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB", orderId } }));
     try {
       setAwbLoadingOrderId(orderId);
@@ -389,6 +394,10 @@ export default function OrdersPage() {
   const handlePrintAWB = async (orderId: string, shopId: string, force = false) => {
     if (awbLoadingOrderId) return;
     const order = orders.find(o => o.id === orderId);
+    if (order && order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+      showToast("Cannot print AWB for Unpaid orders!");
+      return;
+    }
     if (order && order.awb_printed && !force) {
       setPrintConfirmData({
         isOpen: true,
@@ -556,6 +565,9 @@ export default function OrdersPage() {
         setBulkPrintProgress(`Fetching ${count}/${idsToPrint.length}...`);
         const order = orders.find(o => o.id === orderId);
         if (!order) continue;
+        if (order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+          continue;
+        }
 
         try {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
@@ -812,6 +824,9 @@ export default function OrdersPage() {
         setBulkDownloadProgress(`Fetching ${count}/${idsToDownload.length}...`);
         const order = orders.find(o => o.id === orderId);
         if (!order) continue;
+        if (order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+          continue;
+        }
 
         try {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
@@ -1088,7 +1103,7 @@ export default function OrdersPage() {
 
   // Selection helpers (based on paginated current page list!)
   const printEligibleVisibleOrders = paginatedOrders.filter(order =>
-    !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED"].includes((order.actual_status || "").toUpperCase())
+    !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "UNPAID"].includes((order.actual_status || "").toUpperCase())
   );
 
   const isAllSelected = printEligibleVisibleOrders.length > 0 && printEligibleVisibleOrders.every(o => selectedOrderIds.has(o.id));
@@ -1613,7 +1628,7 @@ export default function OrdersPage() {
                      {paginatedOrders.map((order) => {
                       const displayStatus = getDisplayStatus(order);
                       const isSelected = selectedOrderIds.has(order.id);
-                      const isEligible = !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED"].includes((order.actual_status || "").toUpperCase());
+                      const isEligible = !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "UNPAID"].includes((order.actual_status || "").toUpperCase());
                       return (
                         <tr key={`${order.shop_id}_${order.id}`} className="border-b border-[#F1F3F4] hover:bg-slate-50 transition duration-150">
                           <td className="p-3 text-center align-top">
@@ -1742,7 +1757,7 @@ export default function OrdersPage() {
                           {/* Action */}
                           <td className="p-3 align-top">
                             <div className="flex items-center gap-2">
-                              {isPrintTerminal && !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED"].includes((order.actual_status || "").toUpperCase()) && (
+                              {isPrintTerminal && !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "UNPAID"].includes((order.actual_status || "").toUpperCase()) && (
                                 <>
                                   {!(order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "") ? (
                                     <button
