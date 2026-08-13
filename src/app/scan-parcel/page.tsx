@@ -1208,12 +1208,14 @@ export default function ScanPackPage() {
                                   }
                                   return null;
                                 })()}
-                                <button
-                                  onClick={() => handleResetPhoto(item.id, "before")}
-                                  className="mt-0.5 text-[9px] text-red-500 hover:text-red-700 font-semibold cursor-pointer select-none border border-red-200 hover:border-red-400 bg-red-50/50 hover:bg-red-50 px-1.5 py-0.5 rounded transition active:scale-95 outline-none"
-                                >
-                                  Reset
-                                </button>
+                                {!["operator", "system"].includes((terminalName || "").toLowerCase().trim()) && (
+                                  <button
+                                    onClick={() => handleResetPhoto(item.id, "before")}
+                                    className="mt-0.5 text-[9px] text-red-500 hover:text-red-700 font-semibold cursor-pointer select-none border border-red-200 hover:border-red-400 bg-red-50/50 hover:bg-red-50 px-1.5 py-0.5 rounded transition active:scale-95 outline-none"
+                                  >
+                                    Reset
+                                  </button>
+                                )}
                               </>
                             ) : (
                               <div className="w-12 h-12 bg-[#F1F3F4] border border-dashed border-[#E0E2E6] rounded-lg flex flex-col items-center justify-center text-[8px] text-[#9AA0A6] select-none">
@@ -1246,12 +1248,14 @@ export default function ScanPackPage() {
                                   }
                                   return null;
                                 })()}
-                                <button
-                                  onClick={() => handleResetPhoto(item.id, "after")}
-                                  className="mt-0.5 text-[9px] text-red-500 hover:text-red-700 font-semibold cursor-pointer select-none border border-red-200 hover:border-red-400 bg-red-50/50 hover:bg-red-50 px-1.5 py-0.5 rounded transition active:scale-95 outline-none"
-                                >
-                                  Reset
-                                </button>
+                                {!["operator", "system"].includes((terminalName || "").toLowerCase().trim()) && (
+                                  <button
+                                    onClick={() => handleResetPhoto(item.id, "after")}
+                                    className="mt-0.5 text-[9px] text-red-500 hover:text-red-700 font-semibold cursor-pointer select-none border border-red-200 hover:border-red-400 bg-red-50/50 hover:bg-red-50 px-1.5 py-0.5 rounded transition active:scale-95 outline-none"
+                                  >
+                                    Reset
+                                  </button>
+                                )}
                               </>
                             ) : (
                               <div className="w-12 h-12 bg-[#F1F3F4] border border-dashed border-[#E0E2E6] rounded-lg flex flex-col items-center justify-center text-[8px] text-[#9AA0A6] select-none">
