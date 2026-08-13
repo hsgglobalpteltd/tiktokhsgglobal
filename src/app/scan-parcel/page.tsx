@@ -532,7 +532,8 @@ export default function ScanPackPage() {
           order_id: orderId,
           packed_by: terminalName,
           is_after_pack: type === "after",
-          reset: true
+          reset: true,
+          is_desktop: true
         })
       });
 
@@ -663,7 +664,8 @@ export default function ScanPackPage() {
           packed_by: terminalName,
           proof_photo: photoUrl,
           is_after_pack: isAfter,
-          repack: forceRepack
+          repack: forceRepack,
+          is_desktop: true
         })
       });
 
