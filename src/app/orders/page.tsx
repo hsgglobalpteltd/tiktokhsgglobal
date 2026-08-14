@@ -2334,7 +2334,19 @@ export default function OrdersPage() {
             <div className="flex-1 overflow-y-auto p-5">
               {(() => {
                 // Compile logs chronologically
-                const logsList = [...(selectedOrderForLogs.logs || [])];
+                let parsedLogs: any[] = [];
+                if (selectedOrderForLogs.logs) {
+                  if (Array.isArray(selectedOrderForLogs.logs)) {
+                    parsedLogs = selectedOrderForLogs.logs;
+                  } else if (typeof selectedOrderForLogs.logs === "string") {
+                    try {
+                      parsedLogs = JSON.parse(selectedOrderForLogs.logs);
+                    } catch (e) {
+                      console.error("Failed to parse logs string:", e);
+                    }
+                  }
+                }
+                const logsList = [...parsedLogs];
                 
                 // Fallback for packing proof photo
                 const hasPackingLog = logsList.some((l: any) => {
