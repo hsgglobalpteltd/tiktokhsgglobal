@@ -551,6 +551,22 @@ function Check-AndPrintPending {
             $localPath = Join-Path $archiveFolder $fileName
             $idOnly = $fileName.Replace('.pdf', '')
 
+            # Check PrintLog.txt first to avoid double printing
+            if (Test-Path $logFile) {
+                $logContent = Get-Content -Path $logFile
+                $alreadyPrinted = $logContent | Where-Object { $_ -like "*Printed: $fileName*" }
+                if ($alreadyPrinted) {
+                    Write-Host "$idOnly already printed (found in PrintLog.txt). Skipping print and cleaning up secure storage." -ForegroundColor Yellow
+                    try {
+                        $deleteUrl = "$baseUrl/api/files/$([Uri]::EscapeDataString($fileKey))"
+                        $delRes = Invoke-RestMethod -Uri $deleteUrl -Method Delete
+                    } catch {
+                        # Silent delete failure
+                    }
+                    continue
+                }
+            }
+
             Write-Host "$idOnly Downloading.."
             try {
                 # Download file

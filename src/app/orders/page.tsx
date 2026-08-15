@@ -548,6 +548,33 @@ export default function OrdersPage() {
     }
   };
 
+  const handleTogglePrinted = async (orderId: string, currentStatus: boolean) => {
+    try {
+      // Optimistic UI update
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, awb_printed: !currentStatus } : o));
+      showToast(`Updating printed status...`);
+      
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/toggle-printed", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          order_id: orderId,
+          is_printed: !currentStatus
+        })
+      });
+      if (!res.ok) {
+        throw new Error("Failed to update printed status on server");
+      }
+      showToast(`Printed status updated successfully`);
+    } catch (err: any) {
+      // Revert state on failure
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, awb_printed: currentStatus } : o));
+      showToast(`Error: ${err.message || "Failed to update printed status"}`);
+    }
+  };
+
   const handleBulkPrint = async (orderIds?: string[]) => {
     const idsToPrint = orderIds || Array.from(selectedOrderIds);
     if (idsToPrint.length === 0 || isBulkPrinting) return;
@@ -1696,6 +1723,13 @@ export default function OrdersPage() {
                           <td className="p-3 align-top">
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={!!order.awb_printed}
+                                  onChange={() => handleTogglePrinted(order.id, !!order.awb_printed)}
+                                  className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                                  title={order.awb_printed ? "Mark as Not Printed" : "Mark as Printed"}
+                                />
                                 {order.awb_printed ? (
                                   <a
                                     href={`https://ib-v2.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent((order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim())}/${encodeURIComponent(order.id)}.pdf`}

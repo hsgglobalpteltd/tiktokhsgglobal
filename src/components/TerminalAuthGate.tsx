@@ -543,9 +543,9 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
           const isNotPrinted = !order.awb_printed;
           
           const statusLower = (order.actual_status || "").toLowerCase();
-          const cannotPrint = ["pick_up", "in_transit", "shipped", "delivered", "cancelled", "completed"].includes(statusLower);
+          const isPrintable = ["awaiting_shipment", "awaiting_collection"].includes(statusLower);
 
-          return isUnpacked && isNotPrinted && !cannotPrint;
+          return isUnpacked && isNotPrinted && isPrintable;
         });
       };
 
