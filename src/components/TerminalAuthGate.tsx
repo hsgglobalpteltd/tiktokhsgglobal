@@ -540,7 +540,7 @@ export function TerminalAuthGate({ children }: { children: React.ReactNode }) {
       const getUnprintedOrdersList = (orders: any[]) => {
         return orders.filter((order: any) => {
           const isUnpacked = (order.system_status || "").toLowerCase() === "unpacked";
-          const isNotPrinted = !order.awb_printed;
+          const isNotPrinted = !order.is_printed;
           
           const statusLower = (order.actual_status || "").toLowerCase();
           const isPrintable = ["awaiting_shipment", "awaiting_collection"].includes(statusLower);

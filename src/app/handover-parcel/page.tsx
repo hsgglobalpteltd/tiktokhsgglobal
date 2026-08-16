@@ -32,14 +32,36 @@ interface HandoverBatch {
   signature_url: string;
   operator_name: string;
   courier: string;
-  type: "Manual" | "Auto-Detected";
-  orders: { id: string; tracking_number: string; recipient_name: string }[];
+  type: "Dropped" | "Collected";
+  orders: { id: string; tracking_number: string; recipient_name: string; shop_id: string }[];
 }
 
 export default function HandoverParcelPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Highlight text matching query helper
+  const highlightText = (text: string, highlight: string) => {
+    if (!highlight.trim()) {
+      return text;
+    }
+    const regex = new RegExp(`(${highlight.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <>
+        {parts.map((part, i) => 
+          regex.test(part) ? (
+            <mark key={i} className="bg-yellow-200 text-black font-bold p-0.5 rounded">
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  };
 
   // History Filter states
   const [historySearch, setHistorySearch] = useState("");
@@ -68,9 +90,8 @@ export default function HandoverParcelPage() {
   // "Create Handover" modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [modalCourier, setModalCourier] = useState("");
-  const [modalMode, setModalMode] = useState<"Pickup" | "Drop-Off">("Pickup");
+  const [modalMode, setModalMode] = useState<"Pickup" | "Drop-Off">("Drop-Off");
   const [manifestOrders, setManifestOrders] = useState<Order[]>([]);
-  const [forceAddInput, setForceAddInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDownloadingAWB, setIsDownloadingAWB] = useState(false);
   const [terminalName, setTerminalName] = useState("Terminal");
@@ -79,6 +100,11 @@ export default function HandoverParcelPage() {
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
   const [lastHandoverCourier, setLastHandoverCourier] = useState("");
   const [lastHandoverCount, setLastHandoverCount] = useState(0);
+
+  // Success download lists and reset states
+  const [lastSubmittedBatchOrders, setLastSubmittedBatchOrders] = useState<Order[]>([]);
+  const [resetConfirmBatch, setResetConfirmBatch] = useState<HandoverBatch | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
 
   // Toast helper
   const showToast = (msg: string) => {
@@ -173,41 +199,7 @@ export default function HandoverParcelPage() {
     setManifestOrders(packedList);
   }, [modalCourier, orders]);
 
-  // Force Add manual order (Tracking Number or Order ID)
-  const handleForceAdd = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanInput = forceAddInput.trim();
-    if (!cleanInput) return;
 
-    if (!modalCourier) {
-      playErrorBeep();
-      showToast("Please choose a courier first!");
-      setForceAddInput("");
-      return;
-    }
-
-    const matchedOrder = orders.find(o => 
-      String(o.id).trim() === cleanInput || 
-      String(o.tracking_number).trim() === cleanInput
-    );
-
-    if (matchedOrder) {
-      const isAlreadyInList = manifestOrders.some(o => o.id === matchedOrder.id);
-      if (isAlreadyInList) {
-        playErrorBeep();
-        showToast("Order is already in the list!");
-      } else {
-        playBeep();
-        const forcedOrder = { ...matchedOrder, shipping_provider: modalCourier };
-        setManifestOrders(prev => [...prev, forcedOrder]);
-        showToast(`Forced Add: ${matchedOrder.tracking_number}`);
-      }
-    } else {
-      playErrorBeep();
-      showToast("Tracking number / Order ID not found in database!");
-    }
-    setForceAddInput("");
-  };
 
   const handleRemoveOrder = (orderId: string) => {
     setManifestOrders(prev => prev.filter(o => o.id !== orderId));
@@ -216,7 +208,8 @@ export default function HandoverParcelPage() {
 
   // Download Merged AWB PDF from backend
   const handleDownloadAWB = async () => {
-    if (manifestOrders.length === 0) return;
+    const listToUse = showSuccessOverlay ? lastSubmittedBatchOrders : manifestOrders;
+    if (listToUse.length === 0) return;
 
     try {
       setIsDownloadingAWB(true);
@@ -224,7 +217,7 @@ export default function HandoverParcelPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          orders: manifestOrders.map(o => ({ id: o.id, shop_id: o.shop_id || "" }))
+          orders: listToUse.map(o => ({ id: o.id, shop_id: o.shop_id || "" }))
         })
       });
 
@@ -246,7 +239,8 @@ export default function HandoverParcelPage() {
 
   // Download Drop List Checklist PDF via client-side pdf-lib
   const handleDownloadDropList = async () => {
-    if (manifestOrders.length === 0) return;
+    const listToUse = showSuccessOverlay ? lastSubmittedBatchOrders : manifestOrders;
+    if (listToUse.length === 0) return;
 
     try {
       const { PDFDocument, rgb, StandardFonts } = await import("pdf-lib");
@@ -260,7 +254,7 @@ export default function HandoverParcelPage() {
       
       const drawHeader = (pageObj: any, pageNum: number, totalPages: number) => {
         pageObj.drawText("TikTok Handover Drop List", { x: 40, y: 800, size: 18, font: helveticaBold, color: rgb(0.12, 0.12, 0.12) });
-        pageObj.drawText(`Courier: ${modalCourier} | Mode: ${modalMode} | Total: ${manifestOrders.length} parcels`, { x: 40, y: 780, size: 10, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
+        pageObj.drawText(`Courier: ${showSuccessOverlay ? lastHandoverCourier : modalCourier} | Mode: Drop-Off | Total: ${listToUse.length} parcels`, { x: 40, y: 780, size: 10, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
         
         pageObj.drawText(`Print Date/Time: ${printTime}`, { x: 380, y: 800, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
         pageObj.drawText(`Printed By: ${terminalName}`, { x: 380, y: 785, size: 9, font: helvetica, color: rgb(0.37, 0.39, 0.41) });
@@ -293,7 +287,7 @@ export default function HandoverParcelPage() {
       };
       
       const rowsPerPage = 23;
-      const totalPages = Math.max(1, Math.ceil(manifestOrders.length / rowsPerPage));
+      const totalPages = Math.max(1, Math.ceil(listToUse.length / rowsPerPage));
       
       let page = pdfDoc.addPage([595.28, 841.89]);
       drawHeader(page, 1, totalPages);
@@ -303,7 +297,7 @@ export default function HandoverParcelPage() {
       let countOnPage = 0;
       let currentPageNum = 1;
       
-      for (let i = 0; i < manifestOrders.length; i++) {
+      for (let i = 0; i < listToUse.length; i++) {
         if (countOnPage >= rowsPerPage) {
           page = pdfDoc.addPage([595.28, 841.89]);
           currentPageNum++;
@@ -313,7 +307,7 @@ export default function HandoverParcelPage() {
           countOnPage = 0;
         }
         
-        const item = manifestOrders[i];
+        const item = listToUse[i];
         const id = item.id || "";
         const tracking = item.tracking_number || "-";
         
@@ -386,6 +380,7 @@ export default function HandoverParcelPage() {
       if (res.ok) {
         setLastHandoverCourier(modalCourier);
         setLastHandoverCount(manifestOrders.length);
+        setLastSubmittedBatchOrders(manifestOrders);
         setShowSuccessOverlay(true);
         
         setManifestOrders([]);
@@ -405,6 +400,50 @@ export default function HandoverParcelPage() {
     }
   };
 
+  const shouldShowDeleteButton = (batch: HandoverBatch) => {
+    if (batch.type !== "Dropped") return false;
+
+    // Check if ALL orders in this batch are already in transit/shipped/delivered
+    const allInTransit = batch.orders.every(bo => {
+      const order = orders.find(o => o.id === bo.id);
+      if (!order) return true;
+      const actual = (order.actual_status || "").toUpperCase();
+      return ["IN_TRANSIT", "SHIPPED", "PICK_UP", "DELIVERED", "COMPLETED"].includes(actual);
+    });
+
+    return !allInTransit;
+  };
+
+  const handleExecuteResetDrop = async () => {
+    if (!resetConfirmBatch) return;
+
+    try {
+      setIsResetting(true);
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/handover/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          order_ids: resetConfirmBatch.orders.map(o => o.id),
+          timestamp: resetConfirmBatch.timestamp
+        })
+      });
+
+      if (res.ok) {
+        showToast("Drop status successfully reset!");
+        setResetConfirmBatch(null);
+        fetchOrders();
+      } else {
+        const errData = await res.json() as { error?: string };
+        showToast(`Reset failed: ${errData.error || "Unknown Error"}`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast(`Error resetting drop: ${err.message}`);
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   // Download Merged AWB PDF for a past Batch
   const handleDownloadAWBForBatch = async (batch: HandoverBatch) => {
     try {
@@ -413,7 +452,7 @@ export default function HandoverParcelPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          orders: batch.orders.map(o => ({ id: o.id, shop_id: "" }))
+          orders: batch.orders.map(o => ({ id: o.id, shop_id: o.shop_id || "" }))
         })
       });
 
@@ -566,6 +605,16 @@ export default function HandoverParcelPage() {
 
       if (!Array.isArray(logsArray)) return;
 
+      const hasDroppedLog = logsArray.some(l => {
+        const act = (l.action || "").toLowerCase();
+        return act === "dropped" || act === "dropped parcel" || act === "dropped to center";
+      });
+
+      const hasOldHandoverLog = logsArray.some(l => {
+        const act = (l.action || "").toLowerCase();
+        return act === "handover completed";
+      });
+
       logsArray.forEach(log => {
         const actionStr = (log.action || "").toLowerCase();
         const timestamp = Number(log.timestamp || 0);
@@ -574,11 +623,12 @@ export default function HandoverParcelPage() {
         const orderInfo = {
           id: order.id,
           tracking_number: order.tracking_number || "N/A",
-          recipient_name: order.recipient_name || "N/A"
+          recipient_name: order.recipient_name || "N/A",
+          shop_id: order.shop_id || ""
         };
 
-        if (actionStr === "handover completed") {
-          const key = `manual_${timestamp}_${log.actionBy}`;
+        if (actionStr === "dropped" || actionStr === "dropped parcel" || actionStr === "dropped to center") {
+          const key = `dropped_${timestamp}_${log.actionBy}`;
           const existing = batchesMap.get(key);
 
           if (existing) {
@@ -586,32 +636,47 @@ export default function HandoverParcelPage() {
               existing.orders.push(orderInfo);
             }
           } else {
-            let parsedDriver = "Unknown";
-            let parsedPlate = "N/A";
-            const remark = log.remark || "";
-            
-            const driverMatch = remark.match(/Handed over to (.*?)(?:\s*\(Plate:|$)/);
-            if (driverMatch) parsedDriver = driverMatch[1].trim();
-
-            const plateMatch = remark.match(/\(Plate:\s*(.*?)\)/);
-            if (plateMatch) parsedPlate = plateMatch[1].trim();
-
             batchesMap.set(key, {
               id: key,
               timestamp,
-              driver_name: parsedDriver || "Unknown",
-              vehicle_plate: parsedPlate || "N/A",
+              driver_name: "Dropped to Center",
+              vehicle_plate: "N/A",
               signature_url: log.photoUrl || "",
               operator_name: log.actionBy || "System",
               courier: order.shipping_provider || "Unknown",
-              type: "Manual",
+              type: "Dropped",
               orders: [orderInfo]
             });
           }
-        } else if (actionStr === "in transit" && log.actionBy === "System") {
+        } else if (actionStr === "handover completed") {
+          const key = `collected_old_${timestamp}_${log.actionBy}`;
+          const existing = batchesMap.get(key);
+
+          if (existing) {
+            if (!existing.orders.some(o => o.id === orderInfo.id)) {
+              existing.orders.push(orderInfo);
+            }
+          } else {
+            batchesMap.set(key, {
+              id: key,
+              timestamp,
+              driver_name: "Collected by Courier",
+              vehicle_plate: "N/A",
+              signature_url: log.photoUrl || "",
+              operator_name: log.actionBy || "System",
+              courier: order.shipping_provider || "Unknown",
+              type: "Collected",
+              orders: [orderInfo]
+            });
+          }
+        } else if (actionStr === "in transit" || actionStr === "collected" || actionStr === "collected by courier") {
+          if (hasDroppedLog || hasOldHandoverLog) {
+            return;
+          }
+
           const dateStr = new Date(timestamp).toLocaleDateString("en-SG");
           const provider = order.shipping_provider || "Unknown";
-          const key = `auto_${dateStr}_${provider}`;
+          const key = `collected_auto_${dateStr}_${provider}`;
           
           const existing = batchesMap.get(key);
           if (existing) {
@@ -622,12 +687,12 @@ export default function HandoverParcelPage() {
             batchesMap.set(key, {
               id: key,
               timestamp,
-              driver_name: "Auto Courier Scan",
+              driver_name: "Collected by Courier",
               vehicle_plate: "N/A",
               signature_url: "",
               operator_name: "System",
               courier: provider,
-              type: "Auto-Detected",
+              type: "Collected",
               orders: [orderInfo]
             });
           }
@@ -669,8 +734,7 @@ export default function HandoverParcelPage() {
 
       return batch.orders.some(o => 
         o.id.toLowerCase().includes(q) || 
-        o.tracking_number.toLowerCase().includes(q) ||
-        o.recipient_name.toLowerCase().includes(q)
+        o.tracking_number.toLowerCase().includes(q)
       );
     });
   }, [handoverHistory, historySearch, startDate, endDate, filterCourier, filterType]);
@@ -724,7 +788,7 @@ export default function HandoverParcelPage() {
                   </span>
                   <input
                     type="text"
-                    placeholder="Search by Courier, Tracking, Order ID..."
+                    placeholder="Search Order ID or Tracking Number"
                     value={historySearch}
                     onChange={(e) => setHistorySearch(e.target.value)}
                     className="w-full pl-9 pr-3 py-1.5 border border-zinc-300 rounded-lg text-xs font-semibold focus:outline-none focus:border-[#0B57D0] transition bg-white"
@@ -766,9 +830,9 @@ export default function HandoverParcelPage() {
                   onChange={(e) => setFilterType(e.target.value)}
                   className="px-2.5 py-1.5 border border-[#E0E2E6] rounded-lg text-xs font-bold text-zinc-700 focus:outline-none focus:border-[#0B57D0] cursor-pointer bg-white"
                 >
-                  <option value="">All Handover Types</option>
-                  <option value="Manual">Manual (Voucher)</option>
-                  <option value="Auto-Detected">Auto-Detected (Fallback)</option>
+                  <option value="">All Handover Statuses</option>
+                  <option value="Dropped">Dropped</option>
+                  <option value="Collected">Collected</option>
                 </select>
 
               </div>
@@ -782,7 +846,7 @@ export default function HandoverParcelPage() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                   </svg>
-                  Create Handover
+                  Create Drop
                 </button>
               </div>
 
@@ -826,7 +890,7 @@ export default function HandoverParcelPage() {
                         </td>
                         <td className="p-3">
                           <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border ${
-                            batch.type === "Manual" 
+                            batch.type === "Dropped" 
                               ? "bg-[#E6F4EA] text-[#137333] border-[#CEEAD6]" 
                               : "bg-[#E8F0FE] text-[#1A73E8] border-[#D2E3FC]"
                           }`}>
@@ -850,12 +914,23 @@ export default function HandoverParcelPage() {
                             <button
                               onClick={() => handleDownloadDropListForBatch(batch)}
                               className="w-[28px] h-[28px] rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center bg-white text-[#5F6368] border-[#E0E2E6] hover:bg-[#F8F9FA] hover:text-[#1F1F1F] active:scale-95"
-                              title="Download Handover List"
+                              title="Download Drop List"
                             >
                               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                               </svg>
                             </button>
+                            {shouldShowDeleteButton(batch) && (
+                              <button
+                                onClick={() => setResetConfirmBatch(batch)}
+                                className="w-[28px] h-[28px] rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center justify-center bg-white text-rose-600 border-[#E0E2E6] hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 active:scale-95"
+                                title="Reset Drop status"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -940,7 +1015,7 @@ export default function HandoverParcelPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden font-primary max-h-[85vh] flex flex-col animate-in zoom-in-95 duration-150">
             <header className="px-6 py-4 bg-[#f8f9fa] border-b border-zinc-200 flex justify-between items-center">
               <h3 className="text-sm font-black text-[#1f1f1f] uppercase tracking-wide">
-                Create Handover Batch
+                Create Drop Batch
               </h3>
               <button 
                 type="button" 
@@ -953,54 +1028,21 @@ export default function HandoverParcelPage() {
 
             <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-4 min-h-[300px]">
               
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-extrabold uppercase text-zinc-400 tracking-wider">Select Courier *</label>
-                  <select
-                    value={modalCourier}
-                    onChange={(e) => setModalCourier(e.target.value)}
-                    className="w-full px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-700 bg-zinc-50 hover:bg-zinc-100/50 cursor-pointer focus:outline-none focus:border-[#0B57D0] transition"
-                  >
-                    <option value="">-- Choose Courier --</option>
-                    {courierList.map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-extrabold uppercase text-zinc-400 tracking-wider">Handover Mode *</label>
-                  <select
-                    value={modalMode}
-                    onChange={(e) => setModalMode(e.target.value as "Pickup" | "Drop-Off")}
-                    className="w-full px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-700 bg-zinc-50 hover:bg-zinc-100/50 cursor-pointer focus:outline-none focus:border-[#0B57D0] transition"
-                  >
-                    <option value="Pickup">Pickup (Courier Driver Picked up)</option>
-                    <option value="Drop-Off">Drop-Off (Delivered to Drop Center)</option>
-                  </select>
-                </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-extrabold uppercase text-zinc-400 tracking-wider">Select Courier *</label>
+                <select
+                  value={modalCourier}
+                  onChange={(e) => setModalCourier(e.target.value)}
+                  className="w-full px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-700 bg-zinc-50 hover:bg-zinc-100/50 cursor-pointer focus:outline-none focus:border-[#0B57D0] transition"
+                >
+                  <option value="">-- Choose Courier --</option>
+                  {courierList.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
               </div>
 
-              {/* Force Add Input Field */}
-              {modalCourier && (
-                <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3 flex flex-col gap-2">
-                  <label className="text-[10px] font-extrabold uppercase text-zinc-400 tracking-wider">Force Add Unpacked Order (Fallback)</label>
-                  <form onSubmit={handleForceAdd} className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Enter Tracking # or Order ID..."
-                      value={forceAddInput}
-                      onChange={(e) => setForceAddInput(e.target.value)}
-                      className="flex-1 px-3 py-1.5 border border-zinc-300 rounded-lg text-xs font-medium focus:outline-none focus:border-[#0B57D0] focus:ring-4 focus:ring-blue-500/10 transition bg-white"
-                    />
-                    <button
-                      type="submit"
-                      className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842a0] text-white font-bold text-xs rounded-lg cursor-pointer transition active:scale-95"
-                    >
-                      Add Order
-                    </button>
-                  </form>
-                </div>
-              )}
+
 
               {/* Manifest List Table */}
               {modalCourier && (
@@ -1042,56 +1084,24 @@ export default function HandoverParcelPage() {
 
             </div>
 
-            <footer className="px-6 py-4 bg-[#f8f9fa] border-t border-zinc-200 flex justify-between items-center gap-2">
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={manifestOrders.length === 0 || isDownloadingAWB}
-                  onClick={handleDownloadAWB}
-                  className={`px-4 py-2.5 border border-zinc-300 hover:border-zinc-400 text-zinc-700 rounded-lg text-xs font-black active:scale-95 transition cursor-pointer flex items-center gap-1 ${
-                    (manifestOrders.length === 0 || isDownloadingAWB) ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  {isDownloadingAWB ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-zinc-700 border-t-transparent rounded-full animate-spin mr-1" />
-                      AWB...
-                    </>
-                  ) : (
-                    "Download AWB"
-                  )}
-                </button>
-                <button
-                  type="button"
-                  disabled={manifestOrders.length === 0}
-                  onClick={handleDownloadDropList}
-                  className={`px-4 py-2.5 border border-zinc-300 hover:border-zinc-400 text-zinc-700 rounded-lg text-xs font-black active:scale-95 transition cursor-pointer ${
-                    manifestOrders.length === 0 ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  Download Drop List
-                </button>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setShowCreateModal(false); setModalCourier(""); setManifestOrders([]); }}
-                  className="px-4 py-2.5 border border-zinc-300 text-zinc-700 text-xs font-bold rounded-lg hover:bg-zinc-50 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={isSubmitting || manifestOrders.length === 0}
-                  onClick={handleHandoverSubmit}
-                  className={`px-4 py-2.5 bg-[#0B57D0] hover:bg-[#0942a0] text-white text-xs font-black rounded-lg transition cursor-pointer ${
-                    (isSubmitting || manifestOrders.length === 0) ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  {isSubmitting ? "Saving..." : "Submit Handover"}
-                </button>
-              </div>
+            <footer className="px-6 py-4 bg-[#f8f9fa] border-t border-zinc-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowCreateModal(false); setModalCourier(""); setManifestOrders([]); }}
+                className="px-4 py-2.5 border border-zinc-300 text-zinc-700 text-xs font-bold rounded-lg hover:bg-zinc-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting || manifestOrders.length === 0}
+                onClick={handleHandoverSubmit}
+                className={`px-4 py-2.5 bg-[#0B57D0] hover:bg-[#0942a0] text-white text-xs font-black rounded-lg transition cursor-pointer ${
+                  (isSubmitting || manifestOrders.length === 0) ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+              >
+                {isSubmitting ? "Saving..." : "Submit Drop"}
+              </button>
             </footer>
 
           </div>
@@ -1137,8 +1147,8 @@ export default function HandoverParcelPage() {
                 {selectedBatch.orders.map((o, idx) => (
                   <div key={o.id} className="p-3 bg-zinc-50 border border-zinc-200/80 rounded-xl flex items-center justify-between">
                     <div>
-                      <div className="text-xs font-black text-zinc-800 font-mono tracking-wide uppercase">{o.tracking_number}</div>
-                      <div className="text-[10px] font-bold text-zinc-400 mt-0.5">Order ID: {o.id} | Recipient: {o.recipient_name}</div>
+                      <div className="text-xs font-black text-zinc-800 font-mono tracking-wide uppercase">{highlightText(o.tracking_number, historySearch)}</div>
+                      <div className="text-[10px] font-bold text-zinc-400 mt-0.5">Order ID: {highlightText(o.id, historySearch)} | Recipient: {o.recipient_name}</div>
                     </div>
                     <span className="text-[10px] font-mono font-bold text-zinc-400">
                       #{idx + 1}
@@ -1197,17 +1207,87 @@ export default function HandoverParcelPage() {
               </svg>
             </div>
             
-            <h3 className="text-lg font-black text-zinc-900 mb-1">Handover Created!</h3>
+            <h3 className="text-lg font-black text-zinc-900 mb-1">Drop Created!</h3>
             <p className="text-xs text-zinc-500 leading-relaxed mb-5">
-              Successfully created handover batch for <span className="font-bold text-zinc-800">{lastHandoverCount} parcels</span> under <span className="font-bold text-zinc-800">{lastHandoverCourier}</span>. System logs updated.
+              Successfully created drop batch for <span className="font-bold text-zinc-800">{lastHandoverCount} parcels</span> under <span className="font-bold text-zinc-800">{lastHandoverCourier}</span>. System logs updated.
             </p>
 
+            <div className="flex flex-col gap-2 mb-4">
+              <button
+                type="button"
+                disabled={isDownloadingAWB}
+                onClick={handleDownloadAWB}
+                className={`w-full py-2.5 border border-zinc-300 hover:border-zinc-400 text-zinc-700 rounded-xl text-xs font-black active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5 bg-white ${
+                  isDownloadingAWB ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+              >
+                {isDownloadingAWB ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-zinc-700 border-t-transparent rounded-full animate-spin mr-1" />
+                    AWB...
+                  </>
+                ) : (
+                  "Download AWB"
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadDropList}
+                className="w-full py-2.5 border border-zinc-305 hover:border-zinc-400 text-zinc-700 rounded-xl text-xs font-black active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5 bg-white"
+              >
+                Download Drop List
+              </button>
+            </div>
+
             <button
-              onClick={() => setShowSuccessOverlay(false)}
+              onClick={() => {
+                setShowSuccessOverlay(false);
+                setLastSubmittedBatchOrders([]);
+              }}
               className="w-full py-2.5 bg-zinc-900 text-white rounded-xl text-xs font-black hover:bg-zinc-800 cursor-pointer active:scale-98 transition"
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Confirmation Modal for Resetting Drop */}
+      {resetConfirmBatch && (
+        <div className="fixed inset-0 bg-zinc-950/65 backdrop-blur-xs z-55 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl animate-in zoom-in-95 duration-200 select-none">
+            <div className="w-12 h-12 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-rose-100">
+              <svg className="w-6 h-6 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </div>
+            <h3 className="text-base font-black text-zinc-900 mb-1">Reset Drop Status?</h3>
+            <p className="text-xs text-zinc-500 leading-relaxed mb-6">
+              Are you sure you want to reset the drop status for this batch? This will revert <span className="font-bold text-zinc-800">{resetConfirmBatch.orders.length} orders</span> back to <span className="font-bold text-zinc-800">Packed</span> status.
+            </p>
+            <div className="flex gap-2">
+              <button
+                disabled={isResetting}
+                onClick={() => setResetConfirmBatch(null)}
+                className="flex-1 py-2.5 bg-zinc-150 hover:bg-zinc-200 text-zinc-800 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={isResetting}
+                onClick={handleExecuteResetDrop}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition cursor-pointer flex items-center justify-center gap-1"
+              >
+                {isResetting ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Resetting...
+                  </>
+                ) : (
+                  "Yes, Reset"
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -20,6 +20,9 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Tiktok_Pending records state
+  const [pendingRecords, setPendingRecords] = React.useState<any[]>([]);
+
   // Filter offset states
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [monthOffsetOrders, setMonthOffsetOrders] = React.useState(0);
@@ -35,16 +38,24 @@ export default function DashboardPage() {
     );
   }, [orders, selectedShopId]);
 
-  // Fetch orders from local Supabase cache (sync=false)
+  // Fetch orders from local Supabase cache (sync=false) and Tiktok_Pending database
   const fetchDashboardData = async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
       const activeOnlyParam = silent ? "&active_only=true" : "";
-      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, {
-        cache: "no-store"
-      });
-      if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+      
+      const [res, pendingRes] = await Promise.all([
+        fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false${activeOnlyParam}&_t=${Date.now()}`, {
+          cache: "no-store"
+        }),
+        fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/pending-tracking-ids?_t=${Date.now()}`, {
+          cache: "no-store"
+        })
+      ]);
+
+      if (!res.ok) throw new Error(`Orders Fetch HTTP Error ${res.status}`);
       const data = await res.json();
+
       if (data.success) {
         setShops(data.shops || []);
         if (silent) {
@@ -61,13 +72,23 @@ export default function DashboardPage() {
         }
         setError(null);
       } else {
-        throw new Error(data.error || "Unknown error fetching data");
+        throw new Error(data.error || "Unknown error fetching orders");
+      }
+
+      if (pendingRes.ok) {
+        const pendingData = await pendingRes.json();
+        if (pendingData.success && pendingData.tracking_ids) {
+          setPendingRecords(pendingData.tracking_ids);
+        }
       }
     } catch (err: any) {
       console.error("Dashboard fetch error:", err);
       if (!silent) setError(err.message || "Failed to load dashboard metrics.");
     } finally {
-      if (!silent) setIsLoading(false);
+      if (!silent) {
+        // Wait a small timeout to let state flush
+        setTimeout(() => setIsLoading(false), 50);
+      }
     }
   };
 
@@ -94,25 +115,23 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // 1. Qty Pending Pack
-  // actual === "AWAITING_COLLECTION" && system === "unpacked"
-  const pendingPackCount = React.useMemo(() => {
-    return filteredOrders.filter(
-      (o) =>
-        (o.actual_status || "").toUpperCase() === "AWAITING_COLLECTION" &&
-        (o.system_status || "").toLowerCase() === "unpacked"
-    ).length;
-  }, [filteredOrders]);
+  // Filter pending records by selected shop
+  const filteredPending = React.useMemo(() => {
+    if (selectedShopId === "all") return pendingRecords;
+    const selectedShop = shops.find(s => s.id === selectedShopId);
+    if (!selectedShop) return pendingRecords;
+    return pendingRecords.filter(r => r.shop_name === selectedShop.name);
+  }, [pendingRecords, selectedShopId, shops]);
 
-  // 2. Qty Pending Collection
-  // actual === "AWAITING_COLLECTION" && system === "packed"
+  // 1. Qty Pending Pack from Tiktok_Pending table (batch_id_packed is not set)
+  const pendingPackCount = React.useMemo(() => {
+    return filteredPending.filter(r => !r.batch_id_packed).length;
+  }, [filteredPending]);
+
+  // 2. Qty Pending Collection from Tiktok_Pending table (batch_id_packed is set)
   const pendingCollectionCount = React.useMemo(() => {
-    return filteredOrders.filter(
-      (o) =>
-        (o.actual_status || "").toUpperCase() === "AWAITING_COLLECTION" &&
-        (o.system_status || "").toLowerCase() === "packed"
-    ).length;
-  }, [filteredOrders]);
+    return filteredPending.filter(r => !!r.batch_id_packed).length;
+  }, [filteredPending]);
 
   // 3. Weekly Orders (Monday - Sunday)
   const weekRange = React.useMemo(() => {
@@ -453,7 +472,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="flex justify-between items-center text-[10px] font-bold text-zinc-500">
-                  <span>STATUS: AWAITING_COLLECTION (UNPACKED)</span>
+                  <span></span>
                   {pendingPackCount > 0 && <span className="text-orange-600 animate-pulse">ACTION REQUIRED</span>}
                 </div>
               </div>
@@ -474,7 +493,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="flex justify-between items-center text-[10px] font-bold text-zinc-500">
-                  <span>STATUS: AWAITING_COLLECTION (PACKED)</span>
+                  <span></span>
                   <span>MONITOR PICKUP</span>
                 </div>
               </div>

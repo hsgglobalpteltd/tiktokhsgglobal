@@ -59,10 +59,7 @@ export default function ScanPackPage() {
   const [selectedOrderIds, setSelectedOrderIds] = React.useState<Set<string>>(new Set());
   const [selectedOrderItems, setSelectedOrderItems] = React.useState<Order | null>(null);
 
-  const [isOptionsOpen, setIsOptionsOpen] = React.useState(false);
-  const [isSelectionOpen, setIsSelectionOpen] = React.useState(false);
   const [cameraMode, setCameraMode] = React.useState<"before" | "after">("before");
-  const pollingIntervalRef = React.useRef<any>(null);
   
   // Repack Confirmation Dialog State
   const [repackConfirmData, setRepackConfirmData] = React.useState<{
@@ -85,6 +82,33 @@ export default function ScanPackPage() {
     }
   }, []);
 
+  // Highlight text matching query helper
+  const highlightText = (text: string, highlight: string) => {
+    if (!highlight.trim()) {
+      return text;
+    }
+    const regex = new RegExp(`(${highlight.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <>
+        {parts.map((part, i) => 
+          regex.test(part) ? (
+            <mark key={i} className="bg-yellow-200 text-black font-bold p-0.5 rounded">
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  };
+
+  // Bulk Mark as Packed states
+  const [bulkPackConfirmOpen, setBulkPackConfirmOpen] = React.useState(false);
+  const [isBulkPacking, setIsBulkPacking] = React.useState(false);
+  const [bulkPackProgress, setBulkPackProgress] = React.useState("");
+
   // Image zoom preview state
   const [zoomImgUrl, setZoomImgUrl] = React.useState<string | null>(null);
 
@@ -100,6 +124,7 @@ export default function ScanPackPage() {
     let all = 0;
     let pending_pack = 0;
     let pending_collection = 0;
+    let dropped = 0;
     let in_transit = 0;
     let delivered = 0;
 
@@ -111,7 +136,9 @@ export default function ScanPackPage() {
       const system = (order.system_status || "").toLowerCase();
 
       if (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") {
-        if (system === "packed") {
+        if (system === "dropped") {
+          dropped++;
+        } else if (system === "packed") {
           pending_collection++;
         } else {
           pending_pack++;
@@ -123,7 +150,7 @@ export default function ScanPackPage() {
       }
     });
 
-    return { all, pending_pack, pending_collection, in_transit, delivered };
+    return { all, pending_pack, pending_collection, dropped, in_transit, delivered };
   }, [orders, selectedShopId]);
 
   // Memoized displayed orders list (filtered by tab, search, and sorted accordingly)
@@ -141,6 +168,8 @@ export default function ScanPackPage() {
           if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "unpacked")) return false;
         } else if (selectedTab === "pending_collection") {
           if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "packed")) return false;
+        } else if (selectedTab === "dropped") {
+          if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "dropped")) return false;
         } else if (selectedTab === "in_transit") {
           if (actual !== "IN_TRANSIT" && actual !== "SHIPPED" && actual !== "PICK_UP") return false;
         } else if (selectedTab === "delivered") {
@@ -152,10 +181,7 @@ export default function ScanPackPage() {
           const q = searchQuery.toLowerCase().trim();
           const matchId = order.id.toLowerCase().includes(q);
           const matchTracking = (order.tracking_number || "").toLowerCase().includes(q);
-          const matchItems = (order.items || []).some(item => 
-            (item.sku_name || "").toLowerCase().includes(q)
-          );
-          if (!matchId && !matchTracking && !matchItems) return false;
+          if (!(matchId || matchTracking)) return false;
         }
 
         return true;
@@ -205,7 +231,6 @@ export default function ScanPackPage() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      stopMobilePolling();
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
@@ -583,6 +608,106 @@ export default function ScanPackPage() {
     }
   };
 
+  // Helper to create a single blank placeholder image blob
+  const createBlankImageBlob = (): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 300;
+      canvas.height = 300;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, 300, 300);
+        ctx.fillStyle = "#9AA0A6";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Blank Placeholder Image", 150, 130);
+        ctx.fillText("Marked as Packed Manually", 150, 160);
+      }
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+      }, "image/jpeg", 0.85);
+    });
+  };
+
+  // Perform bulk mark as packed manually
+  const executeBulkMarkAsPacked = async () => {
+    const idsToPack = Array.from(selectedOrderIds);
+    if (idsToPack.length === 0 || isBulkPacking) return;
+
+    setIsBulkPacking(true);
+    setBulkPackProgress("Initializing...");
+
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+      // 1. Create and upload the blank placeholder image ONCE
+      setBulkPackProgress("Creating placeholder image...");
+      const blankBlob = await createBlankImageBlob();
+      
+      setBulkPackProgress("Uploading placeholder to storage...");
+      const placeholderPhotoUrl = await uploadToStorage(blankBlob, `manual-bulk-${Date.now()}`, "after");
+
+      // 2. Process each order sequentially
+      let count = 0;
+      for (const orderId of idsToPack) {
+        count++;
+        setBulkPackProgress(`Packing ${count}/${idsToPack.length}...`);
+
+        const order = orders.find(o => o.id === orderId);
+        if (!order) {
+          failCount++;
+          continue;
+        }
+
+        try {
+          // 3. Call backend orders/pack endpoint with the single placeholder URL
+          const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/pack", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              order_id: order.id,
+              packed_by: terminalName,
+              proof_photo: placeholderPhotoUrl,
+              is_after_pack: true,
+              repack: false,
+              is_desktop: true
+            })
+          });
+
+          if (!res.ok) {
+            const errorText = await res.json() as any;
+            throw new Error(errorText.error || "Pack operation failed on backend");
+          }
+
+          const resJson = await res.json() as { success: boolean; order: any };
+
+          // Update local orders list state instantly
+          setOrders(prev => prev.map(o => o.id === order.id ? { ...o, ...resJson.order } : o));
+          successCount++;
+        } catch (err) {
+          console.error(`Failed to pack order ${order.id}:`, err);
+          failCount++;
+        }
+      }
+
+      playBeep();
+      showToast(`Manually packed ${successCount} orders successfully. Failed: ${failCount}`);
+      setSelectedOrderIds(new Set());
+    } catch (err: any) {
+      console.error("Bulk mark packed error:", err);
+      playErrorBeep();
+      showToast(err.message || "Failed to mark orders as packed.");
+    } finally {
+      setIsBulkPacking(false);
+      setBulkPackProgress("");
+      setBulkPackConfirmOpen(false);
+    }
+  };
+
   // Main code processing function
   const handleScannedCode = async (barcode: string, blob: Blob, forceRepack: boolean = false) => {
     
@@ -720,69 +845,6 @@ export default function ScanPackPage() {
 
 
 
-  const openScanOptions = () => {
-    setIsOptionsOpen(true);
-  };
-
-  const startMobilePolling = () => {
-    stopMobilePolling();
-    let previousPackedCount = orders.filter(o => o.system_status === "packed").length;
-    
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders?sync=false&active_only=true&_t=" + Date.now(), { cache: "no-store" });
-        if (res.ok) {
-          const data = await res.json() as { orders: any[]; shops?: any[] };
-          const currentOrders = data.orders || [];
-          
-          let mergedOrders: Order[] = [];
-          setOrders(prev => {
-            const prevMap = new Map(prev.map(o => [o.id, o]));
-            currentOrders.forEach((o: any) => {
-              prevMap.set(o.id, o);
-            });
-            mergedOrders = Array.from(prevMap.values()).sort((a, b) => b.create_time - a.create_time);
-            return mergedOrders;
-          });
-
-          const currentPackedCount = mergedOrders.filter(o => o.system_status === "packed").length;
-          
-          if (currentPackedCount > previousPackedCount) {
-            const newlyPacked = mergedOrders.find(co => {
-              const old = orders.find(oo => oo.id === co.id);
-              return co.system_status === "packed" && (!old || old.system_status !== "packed");
-            });
-
-            if (data.shops) setShops(data.shops);
-
-            playBeep();
-            showToast(`Order ${newlyPacked ? newlyPacked.id : ""} successfully scanned via mobile phone!`);
-            
-            stopMobilePolling();
-            setIsSelectionOpen(false);
-          }
-        }
-      } catch (err) {
-        console.error("Mobile scan polling error:", err);
-      }
-    }, 3000);
-  };
-
-  const stopMobilePolling = () => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-  };
-
-  const launchCameraScanner = (mode: "before" | "after") => {
-    setCameraMode(mode);
-    setIsOptionsOpen(false);
-    setIsSelectionOpen(true); // Open scanner selector modal step
-    setTimeout(() => {
-      startMobilePolling();
-    }, 50);
-  };
 
   const formatDateTime = (timestamp?: number) => {
     if (!timestamp) return "N/A";
@@ -969,7 +1031,8 @@ export default function ScanPackPage() {
             <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap scrollbar-none">
               {[
                 { key: "pending_pack", label: "Pending Pack" },
-                { key: "pending_collection", label: "Pending Collection" }
+                { key: "pending_collection", label: "Pending Collection" },
+                { key: "dropped", label: "Dropped" }
               ].map((tab) => {
                 const count = counts[tab.key as keyof typeof counts];
                 const isActive = selectedTab === tab.key;
@@ -1001,7 +1064,7 @@ export default function ScanPackPage() {
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Search order ID, SKU, customer..."
+                  placeholder="Search Order ID or Tracking Number"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full md:w-64 border border-[#E0E2E6] rounded-full px-4 py-1.5 text-xs text-[#1F1F1F] placeholder-[#5F6368] bg-[#FCFDFE] focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
@@ -1028,26 +1091,28 @@ export default function ScanPackPage() {
                 Download Checklist
               </button>
 
-              {/* Scan Order button replacing Refresh Orders */}
-              <button
-                onClick={openScanOptions}
-                className="btn-primary"
-                style={{
-                  padding: "8px 16px",
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  height: "32px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  backgroundColor: "#0B57D0"
-                }}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M4 8h16M4 16h16" />
-                </svg>
-                Scan Order
-              </button>
+              {/* Mark as Packed button */}
+              {selectedOrderIds.size > 0 && (
+                <button
+                  onClick={() => setBulkPackConfirmOpen(true)}
+                  className="btn-primary"
+                  style={{
+                    padding: "8px 16px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    height: "32px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    backgroundColor: "#2E7D32"
+                  }}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Mark as Packed ({selectedOrderIds.size})
+                </button>
+              )}
             </div>
 
           </div>
@@ -1068,7 +1133,6 @@ export default function ScanPackPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                 </svg>
                 No orders matching this category found.
-                <button onClick={openScanOptions} className="mt-3 btn-secondary text-xs rounded-full">Start Scanning Session</button>
               </div>
             ) : (
               <table className="w-full border-collapse text-left text-xs table-fixed min-w-[1015px]">
@@ -1120,7 +1184,7 @@ export default function ScanPackPage() {
                         <td className="p-3 align-top">
                           <div className="flex items-center gap-1.5 mb-1">
                             <span className="font-mono font-semibold text-[#1F1F1F] text-xs truncate max-w-[140px]" title={item.id}>
-                              {item.id}
+                              {highlightText(item.id, searchQuery)}
                             </span>
                             <button
                               onClick={() => handleCopyText(item.id)}
@@ -1168,7 +1232,7 @@ export default function ScanPackPage() {
                             {item.tracking_number && item.tracking_number !== "N/A" && item.tracking_number.trim() !== "" ? (
                               <div className="flex items-center gap-1.5">
                                 <span className="font-mono text-[#5F6368] text-[10px] truncate max-w-[120px]" title={item.tracking_number}>
-                                  {item.tracking_number}
+                                  {highlightText(item.tracking_number, searchQuery)}
                                 </span>
                                 <button
                                   onClick={() => handleCopyText(item.tracking_number)}
@@ -1278,137 +1342,6 @@ export default function ScanPackPage() {
         </div>
 
       </div>
-
-      {/* 1. Mode Selection Modal Options */}
-      {isOptionsOpen && (
-        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[20000] p-4 select-none">
-          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-xl max-w-sm w-full p-6 flex flex-col gap-4">
-            <div>
-              <h3 className="text-base font-semibold text-[#1F1F1F]">Scan Order Mode</h3>
-              <p className="text-xs text-[#5F6368] mt-1">Select the packing stage to begin camera scan</p>
-            </div>
-            
-            <div className="flex flex-col gap-2.5 mt-2">
-              <button 
-                onClick={() => launchCameraScanner("before")}
-                className="w-full text-left p-3.5 rounded-xl border border-[#C2E7FF] bg-[#EAF1FB] hover:bg-[#D2E3FC] text-[#0B57D0] transition font-semibold text-xs flex items-center justify-between"
-              >
-                <span>Packing Proof</span>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              </button>
-
-              <button 
-                onClick={() => launchCameraScanner("after")}
-                className="w-full text-left p-3.5 rounded-xl border border-[#A7F3D0] bg-[#E6F4EA] hover:bg-[#CEEAD6] text-[#137333] transition font-semibold text-xs flex items-center justify-between"
-              >
-                <span>Shipping Proof</span>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </button>
-            </div>
-
-            <button 
-              onClick={() => setIsOptionsOpen(false)}
-              className="mt-2 text-center text-xs font-semibold text-[#5F6368] hover:text-[#1F1F1F] py-2 cursor-pointer"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 1b. Mobile QR Code Scanner Modal */}
-      {isSelectionOpen && (
-        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[20000] p-4 select-none animate-[fadeIn_0.15s_ease-out]">
-          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-5">
-            
-            {/* Header */}
-            <div className="flex justify-between items-center border-b border-[#F1F3F4] pb-3">
-              <div>
-                <h3 className="text-base font-bold text-[#1F1F1F]">
-                  Scan Order with Mobile
-                </h3>
-                <p className="text-xs text-[#5F6368] mt-0.5">
-                  Scan Mode: <span className="font-semibold text-gray-800 uppercase">{cameraMode === "after" ? "Shipping Proof (App 6)" : "Packing Proof (App 5)"}</span>
-                </p>
-              </div>
-              <button 
-                onClick={() => {
-                  stopMobilePolling();
-                  setIsSelectionOpen(false);
-                }}
-                className="text-gray-400 hover:text-gray-600 outline-none cursor-pointer"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* QR Card Body */}
-            <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[#E0E2E6] text-center bg-slate-50/50">
-              <div className="p-2.5 bg-white rounded-xl border border-[#E0E2E6] shadow-sm flex items-center justify-center mb-3">
-                <img 
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
-                    (() => {
-                      if (typeof window === "undefined") return "";
-                      const base = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-                        ? "http://127.0.0.1:8080"
-                        : "https://ibhsgglobalapp.netlify.app";
-                      const folder = cameraMode === "after" ? "shipping-proof" : "packing-proof";
-                      return `${base}/${folder}/index.html`;
-                    })()
-                  )}`} 
-                  alt="Scan using mobile phone"
-                  className="w-[160px] h-[160px] object-contain select-none"
-                />
-              </div>
-
-              <h4 className="text-xs font-bold text-[#1F1F1F]">Scan QR Code to Open App</h4>
-              <p className="text-[10px] text-[#5F6368] mt-1 max-w-[240px] leading-normal">
-                Use your mobile phone camera to scan the code and launch the dedicated operator workflow.
-              </p>
-
-              {pollingIntervalRef.current ? (
-                <div className="flex items-center gap-1.5 mt-4 text-[#137333]">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                  </span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider">Listening for phone scans...</span>
-                </div>
-              ) : (
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startMobilePolling();
-                  }}
-                  className="mt-4 bg-[#EAF1FB] text-[#0B57D0] border border-[#C2E7FF] hover:bg-[#D2E3FC] px-3 py-1.5 text-[10px] font-bold rounded-lg transition active:scale-95 cursor-pointer"
-                >
-                  Activate Listener Connection
-                </button>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="flex justify-end gap-2.5 border-t border-[#F1F3F4] pt-3 mt-1">
-              <button 
-                onClick={() => {
-                  stopMobilePolling();
-                  setIsSelectionOpen(false);
-                }}
-                className="px-4 py-2 border border-[#E0E2E6] hover:bg-[#F8F9FA] text-[#5F6368] text-xs font-semibold rounded-lg transition cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
 
       {/* 2. Barcode Camera Scanner Modal */}
 
@@ -1690,6 +1623,59 @@ export default function ScanPackPage() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {bulkPackConfirmOpen && (
+        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[30000] p-4 select-none">
+          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 animate-[fadeIn_0.15s_ease-out]">
+            <div className="flex items-start gap-3.5">
+              <div className="bg-[#E8F5E9] p-2 rounded-full text-[#2E7D32]">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-semibold text-[#2E7D32]">Mark as Packed Confirmation</h3>
+                <div className="text-xs text-[#5F6368] mt-1.5 leading-relaxed">
+                  Are you sure you want to mark the selected <strong>{selectedOrderIds.size}</strong> orders as <strong>Packed</strong> manually?
+                  <br />
+                  <br />
+                  This will:
+                  <span className="block mt-1 pl-4 list-disc text-gray-600">
+                    • Upload a blank placeholder proof photo.
+                    <br />
+                    • Set status to Packed under terminal <strong>{terminalName}</strong>.
+                    <br />
+                    • Push a Shipping Proof action to logs.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {isBulkPacking && (
+              <div className="text-xs text-[#0B57D0] bg-[#E8F0FE] p-2 rounded-lg font-semibold animate-pulse text-center">
+                {bulkPackProgress}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2.5 mt-2">
+              <button
+                disabled={isBulkPacking}
+                onClick={executeBulkMarkAsPacked}
+                className="px-4 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white text-xs font-semibold rounded-lg shadow transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isBulkPacking ? "Packing..." : "Confirm & Pack"}
+              </button>
+              <button
+                disabled={isBulkPacking}
+                onClick={() => setBulkPackConfirmOpen(false)}
+                className="px-4 py-2 border border-[#E0E2E6] hover:bg-[#F8F9FA] text-[#5F6368] text-xs font-semibold rounded-lg transition cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -38,7 +38,7 @@ interface Order {
   packed_by?: string;
   packed_at?: number;
   proof_photo?: string;
-  awb_printed?: boolean;
+  is_printed?: boolean;
   issues?: IssueItem[];
   logs?: any[];
   before_pack_photo?: string;
@@ -122,6 +122,28 @@ export default function OrdersPage() {
       setIsPrintTerminal(isAutoPrint);
     }
   }, []);
+
+  // Highlight text matching query helper
+  const highlightText = (text: string, highlight: string) => {
+    if (!highlight.trim()) {
+      return text;
+    }
+    const regex = new RegExp(`(${highlight.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <>
+        {parts.map((part, i) => 
+          regex.test(part) ? (
+            <mark key={i} className="bg-yellow-200 text-black font-bold p-0.5 rounded">
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  };
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -143,6 +165,7 @@ export default function OrdersPage() {
   const [bulkPrintProgress, setBulkPrintProgress] = React.useState<string>("");
   const [isBulkDownloading, setIsBulkDownloading] = React.useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = React.useState<string>("");
+  const [isBulkMarkingPrinted, setIsBulkMarkingPrinted] = React.useState(false);
 
   // Confirmation popup state
   const [printConfirmData, setPrintConfirmData] = React.useState<{
@@ -398,7 +421,7 @@ export default function OrdersPage() {
       showToast("Cannot print AWB for Unpaid orders!");
       return;
     }
-    if (order && order.awb_printed && !force) {
+    if (order && order.is_printed && !force) {
       setPrintConfirmData({
         isOpen: true,
         orderId,
@@ -457,30 +480,6 @@ export default function OrdersPage() {
         const singlePdfBytes = await singlePdf.save();
         const blob = new Blob([singlePdfBytes as any], { type: "application/pdf" });
 
-        const blobToBase64 = (b: Blob): Promise<string> => {
-          return new Promise((resVal, rejVal) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const base64data = reader.result as string;
-              resVal(base64data.split(',')[1]);
-            };
-            reader.onerror = rejVal;
-            reader.readAsDataURL(b);
-          });
-        };
-        const base64 = await blobToBase64(blob);
-
-        const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
-          let binary = '';
-          const bytes = new Uint8Array(buffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          return window.btoa(binary);
-        };
-        const originalBase64 = arrayBufferToBase64(pdfBytes);
-
         // Trigger browser downloads directly for print (scaled) and upload single to R2
         const now = new Date();
         const DD = String(now.getDate()).padStart(2, '0');
@@ -536,7 +535,7 @@ export default function OrdersPage() {
 
         showToast("AWB printed silently successfully");
         // Update local state so AWB printed flag updates instantly
-        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, awb_printed: true } : o));
+        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, is_printed: true } : o));
       } else {
         throw new Error(data.error || "No document URL returned");
       }
@@ -551,7 +550,7 @@ export default function OrdersPage() {
   const handleTogglePrinted = async (orderId: string, currentStatus: boolean) => {
     try {
       // Optimistic UI update
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, awb_printed: !currentStatus } : o));
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, is_printed: !currentStatus } : o));
       showToast(`Updating printed status...`);
       
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/toggle-printed", {
@@ -570,9 +569,49 @@ export default function OrdersPage() {
       showToast(`Printed status updated successfully`);
     } catch (err: any) {
       // Revert state on failure
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, awb_printed: currentStatus } : o));
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, is_printed: currentStatus } : o));
       showToast(`Error: ${err.message || "Failed to update printed status"}`);
     }
+  };
+
+  const handleBulkMarkAsPrinted = async () => {
+    const idsToMark = Array.from(selectedOrderIds);
+    if (idsToMark.length === 0 || isBulkMarkingPrinted) return;
+
+    setIsBulkMarkingPrinted(true);
+    showToast(`Marking ${idsToMark.length} orders as printed...`);
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const orderId of idsToMark) {
+      try {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/toggle-printed", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            order_id: orderId,
+            is_printed: true,
+            action_by: terminalName || "Operator"
+          })
+        });
+        if (res.ok) {
+          successCount++;
+          // Optimistically update status
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, is_printed: true } : o));
+        } else {
+          failCount++;
+        }
+      } catch (e) {
+        failCount++;
+      }
+    }
+
+    setIsBulkMarkingPrinted(false);
+    setSelectedOrderIds(new Set()); // Clear selection
+    showToast(`Completed: ${successCount} marked as printed, ${failCount} failed.`);
   };
 
   const handleBulkPrint = async (orderIds?: string[]) => {
@@ -598,7 +637,7 @@ export default function OrdersPage() {
 
         try {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
-          if (order.awb_printed) {
+          if (order.is_printed) {
             const r2Url = `https://ib-v2.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
             docUrls.push(r2Url);
             saveFilesInfo.push({
@@ -710,19 +749,6 @@ export default function OrdersPage() {
       setBulkPrintProgress("Finalizing...");
       const mergedPdfBytes = await mergedPdf.save();
       const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
-      
-      const blobToBase64 = (b: Blob): Promise<string> => {
-        return new Promise((resVal, rejVal) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64data = reader.result as string;
-            resVal(base64data.split(',')[1]);
-          };
-          reader.onerror = rejVal;
-          reader.readAsDataURL(b);
-        });
-      };
-      const base64 = await blobToBase64(blob);
 
       // Trigger browser downloads directly for bulk print (scaled) and upload individual to R2
       const now = new Date();
@@ -798,7 +824,7 @@ export default function OrdersPage() {
 
       // Update local state so AWB printed flag updates instantly for successfully printed orders
       const printedSet = new Set(idsToPrint.filter(id => !failedOrders.includes(id)));
-      setOrders(prev => prev.map(o => printedSet.has(o.id) ? { ...o, awb_printed: true } : o));
+      setOrders(prev => prev.map(o => printedSet.has(o.id) ? { ...o, is_printed: true } : o));
 
       setSelectedOrderIds(new Set());
 
@@ -819,7 +845,7 @@ export default function OrdersPage() {
     const selectedIdsArray = Array.from(selectedOrderIds);
     const printedIds = selectedIdsArray.filter(id => {
       const order = orders.find(o => o.id === id);
-      return order && order.awb_printed;
+      return order && order.is_printed;
     });
 
     if (printedIds.length > 0) {
@@ -857,7 +883,7 @@ export default function OrdersPage() {
 
         try {
           const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
-          if (order.awb_printed) {
+          if (order.is_printed) {
             const r2Url = `https://ib-v2.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
             docUrls.push(r2Url);
             saveFilesInfo.push({
@@ -989,7 +1015,7 @@ export default function OrdersPage() {
       showToast("AWBs merged and opened successfully!");
 
       const printedSet = new Set(idsToDownload.filter(id => !failedOrders.includes(id)));
-      setOrders(prev => prev.map(o => printedSet.has(o.id) ? { ...o, awb_printed: true } : o));
+      setOrders(prev => prev.map(o => printedSet.has(o.id) ? { ...o, is_printed: true } : o));
       setSelectedOrderIds(new Set());
 
       if (failedOrders.length > 0) {
@@ -1083,16 +1109,8 @@ export default function OrdersPage() {
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
         const matchId = (o.id || "").toLowerCase().includes(q);
-        const matchName = (o.recipient_name || "").toLowerCase().includes(q);
-        const matchItem = o.items.some((item) =>
-          (item.product_name || "").toLowerCase().includes(q) ||
-          (item.seller_sku || "").toLowerCase().includes(q)
-        );
-        if (!matchId && matchName && !matchItem) {
-          // If we had matchName wait, if search is matched by any, it's fine.
-          // Let's use the original search matching:
-        }
-        if (!(matchId || matchName || matchItem)) return false;
+        const matchTracking = (o.tracking_number || "").toLowerCase().includes(q);
+        if (!(matchId || matchTracking)) return false;
       }
 
       // Month Filter
@@ -1321,7 +1339,7 @@ export default function OrdersPage() {
               >
                 <input
                   type="text"
-                  placeholder={isSearchExpanded || searchQuery ? "Search order ID, SKU, customer..." : ""}
+                  placeholder={isSearchExpanded || searchQuery ? "Search Order ID or Tracking Number" : ""}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setIsSearchExpanded(true)}
@@ -1451,6 +1469,44 @@ export default function OrdersPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                       </svg>
                       Print AWB ({selectedOrderIds.size})
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Bulk Mark as Printed Button */}
+              {isPrintTerminal && selectedOrderIds.size > 0 && (
+                <button
+                  onClick={handleBulkMarkAsPrinted}
+                  disabled={isBulkMarkingPrinted}
+                  className="btn-secondary"
+                  style={{
+                    padding: "8px 16px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    height: "32px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    backgroundColor: "#1e293b",
+                    color: "#ffffff",
+                    borderColor: "#334155"
+                  }}
+                >
+                  {isBulkMarkingPrinted ? (
+                    <>
+                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                      </svg>
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                      Mark as Printed ({selectedOrderIds.size})
                     </>
                   )}
                 </button>
@@ -1681,7 +1737,7 @@ export default function OrdersPage() {
                           <td className="p-3 align-top">
                             <div className="flex items-center gap-1.5 mb-1">
                               <span className="font-mono font-semibold text-[#1F1F1F] text-xs truncate max-w-[140px]" title={order.id}>
-                                {order.id}
+                                {highlightText(order.id, searchQuery)}
                               </span>
                               <button
                                 onClick={() => copyToClipboard(order.id)}
@@ -1723,14 +1779,7 @@ export default function OrdersPage() {
                           <td className="p-3 align-top">
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  checked={!!order.awb_printed}
-                                  onChange={() => handleTogglePrinted(order.id, !!order.awb_printed)}
-                                  className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer flex-shrink-0"
-                                  title={order.awb_printed ? "Mark as Not Printed" : "Mark as Printed"}
-                                />
-                                {order.awb_printed ? (
+                                {order.is_printed ? (
                                   <a
                                     href={`https://ib-v2.hsgglobalpteltd.workers.dev/api/files/Tiktok AWB/${encodeURIComponent((order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim())}/${encodeURIComponent(order.id)}.pdf`}
                                     target="_blank"
@@ -1759,7 +1808,7 @@ export default function OrdersPage() {
                               {order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "" ? (
                                 <div className="flex items-center gap-1.5">
                                   <span className="font-mono text-[#5F6368] text-[10px] truncate max-w-[120px]" title={order.tracking_number}>
-                                    {order.tracking_number}
+                                    {highlightText(order.tracking_number, searchQuery)}
                                   </span>
                                   <button
                                     onClick={() => copyToClipboard(order.tracking_number)}
@@ -1823,7 +1872,7 @@ export default function OrdersPage() {
                                         whiteSpace: "nowrap"
                                       }}
                                     >
-                                      {awbLoadingOrderId === order.id ? "Printing..." : order.awb_printed ? "Print Again" : "Print AWB"}
+                                      {awbLoadingOrderId === order.id ? "Printing..." : order.is_printed ? "Reprint AWB" : "Print AWB"}
                                     </button>
                                   )}
                                 </>

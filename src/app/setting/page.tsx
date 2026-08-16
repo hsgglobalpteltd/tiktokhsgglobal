@@ -72,27 +72,19 @@ export default function SettingPage() {
   const [isSyncingHistBlock, setIsSyncingHistBlock] = React.useState(false);
   const [cooldownSeconds, setCooldownSeconds] = React.useState(0);
 
-  const [awbDownloadPath, setAwbDownloadPath] = React.useState("");
   const [awbPrintScale, setAwbPrintScale] = React.useState("100");
   const [isPrintTerminal, setIsPrintTerminal] = React.useState(false);
-  const [edgePath, setEdgePath] = React.useState("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
-  const [edgeProfile, setEdgeProfile] = React.useState("Default");
   const [killDelay, setKillDelay] = React.useState("180");
   
-  const [watchFolder, setWatchFolder] = React.useState("");
   const [archiveFolder, setArchiveFolder] = React.useState("");
   const [sumatraPath, setSumatraPath] = React.useState("");
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
-      setAwbDownloadPath(localStorage.getItem("awb_download_path") || "");
       setAwbPrintScale(localStorage.getItem("awb_print_scale") || "100");
       setIsPrintTerminal(localStorage.getItem("terminal_auto_print") === "true");
-      setEdgePath(localStorage.getItem("edge_path") || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe");
-      setEdgeProfile(localStorage.getItem("edge_profile") || "Default");
       setKillDelay(localStorage.getItem("kill_delay") || "180");
       
-      setWatchFolder(localStorage.getItem("watch_folder_path") || "");
       setArchiveFolder(localStorage.getItem("archive_folder_path") || "");
       setSumatraPath(localStorage.getItem("sumatra_path") || "");
     }
@@ -753,153 +745,48 @@ pause`.trim();
         {/* Left Column Wrapper */}
         <div className="flex flex-col gap-5 pr-1" style={{ height: "auto", minWidth: "0" }}>
           
-          {/* Connection Credentials Section */}
+          {/* Terminal IP Configuration Section */}
           <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
-            
-            {/* Header (Always Visible) */}
-            <div className="flex justify-between items-center" style={{ marginBottom: "16px" }}>
-              <h2 className="section-title">TikTok API Credentials</h2>
-              {!isLoadingKeys && (
-                <div>
-                  {!isEditingApi ? (
-                    <button 
-                      type="button"
-                      onClick={() => setIsEditingApi(true)}
-                      className="btn-secondary"
-                    >
-                      Edit API Settings
-                    </button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={handleSaveKeys}
-                        disabled={isSaving}
-                        className="btn-primary"
-                      >
-                        {isSaving ? "Saving..." : "Save Setting Api"}
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => {
-                          setIsEditingApi(false);
-                          fetchKeys();
-                        }}
-                        className="btn-secondary"
-                        style={{ borderColor: "#E0E2E6", color: "#5F6368" }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+            <div className="section-header">
+              <h2 className="section-title">Terminal IP Configuration</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const input = document.getElementById("local-ip-settings") as HTMLInputElement;
+                  if (input) {
+                    localStorage.setItem("local_terminal_ip", input.value.trim());
+                    showToast("Local IP override saved successfully. Reloading...");
+                    setTimeout(() => {
+                      window.location.reload();
+                    }, 1500);
+                  }
+                }}
+                className="btn-primary"
+                style={{ height: "36px" }}
+              >
+                Save Local IP
+              </button>
             </div>
-
-            {isLoadingKeys ? (
-              <div className="empty-shops-state" style={{ borderStyle: "none" }}>Loading credentials...</div>
-            ) : (
-              <form onSubmit={handleSaveKeys} className="settings-form">
-                <div className="flex gap-4">
-                  <div className="form-group" style={{ flex: 4 }}>
-                    <label className="form-label">TikTok App Key</label>
-                    <input 
-                      type="text" 
-                      value={appKey} 
-                      onChange={(e) => setAppKey(e.target.value)}
-                      placeholder="Enter App Key"
-                      className="form-input"
-                      disabled={!isEditingApi}
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ flex: 6 }}>
-                    <label className="form-label">TikTok App Secret</label>
-                    <input 
-                      type="password" 
-                      value={appSecret} 
-                      onChange={(e) => setAppSecret(e.target.value)}
-                      placeholder="Enter App Secret"
-                      className="form-input"
-                      disabled={!isEditingApi}
-                    />
-                  </div>
-                </div>
-              </form>
-            )}
-
-            {/* Scope Verification List Section (Moved directly under API fields) */}
-            <div style={{ marginTop: "24px", borderTop: "1px solid #E0E2E6", paddingTop: "16px" }}>
-              <h3 className="form-label" style={{ fontWeight: 600, marginBottom: "8px" }}>Scope Authorization Health</h3>
-              {isCheckingScopes ? (
-                <div className="empty-shops-state" style={{ borderStyle: "none" }}>Checking API scopes health...</div>
-              ) : (
-                <div className="scope-card-list">
-                  
-                  {/* 1. Global Shop Info Scope */}
-                  <div className="scope-card-item">
-                    <div className="scope-details">
-                      <span className="scope-name">Global Shop Information</span>
-                      <span className="scope-key">seller.shop.info</span>
-                    </div>
-                    {scopesCheck?.shop_info?.ok ? (
-                      <span className="scope-badge success">
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="10 3 4.5 8.5 2 6"></polyline></svg>
-                        Healthy
-                      </span>
-                    ) : (
-                      <span className="scope-badge error" title={scopesCheck?.shop_info?.message}>
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line></svg>
-                        Error
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 2. Order Information Scope */}
-                  <div className="scope-card-item">
-                    <div className="scope-details">
-                      <span className="scope-name">Order Information</span>
-                      <span className="scope-key">seller.order.info</span>
-                    </div>
-                    {scopesCheck?.order_info?.ok ? (
-                      <span className="scope-badge success">
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="10 3 4.5 8.5 2 6"></polyline></svg>
-                        Healthy
-                      </span>
-                    ) : (
-                      <span className="scope-badge error" title={scopesCheck?.order_info?.message}>
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line></svg>
-                        Error
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 3. Fulfillment Basic Scope */}
-                  <div className="scope-card-item">
-                    <div className="scope-details">
-                      <span className="scope-name">Fulfillment Basic</span>
-                      <span className="scope-key">seller.fulfillment.basic</span>
-                    </div>
-                    {scopesCheck?.fulfillment?.ok ? (
-                      <span className="scope-badge success">
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="10 3 4.5 8.5 2 6"></polyline></svg>
-                        Healthy
-                      </span>
-                    ) : (
-                      <span className="scope-badge error" title={scopesCheck?.fulfillment?.message}>
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line></svg>
-                        Error
-                      </span>
-                    )}
-                  </div>
-
-                </div>
-              )}
+            <div className="flex flex-col gap-2.5">
+              <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
+                Distinguish multiple machines sharing the same local network by setting a local IPv4 address override.
+              </p>
+              <div className="flex gap-2.5 mt-2">
+                <input
+                  type="text"
+                  id="local-ip-settings"
+                  defaultValue={localStorage.getItem("local_terminal_ip") || ""}
+                  placeholder="e.g. 192.168.1.100"
+                  className="form-input"
+                  style={{ maxWidth: "200px", height: "36px", textAlign: "center" }}
+                />
+              </div>
             </div>
           </div>
 
           {/* Auto-Sync Settings Section */}
           {isPrintTerminal && (
-            <div className="settings-section" style={{ flex: "1 0 auto", overflow: "visible" }}>
+            <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
             
             {/* Header (contains save button only if there are changes) */}
             <div className="flex justify-between items-center" style={{ marginBottom: "16px" }}>
@@ -1072,45 +959,6 @@ pause`.trim();
 
           {/* Terminal Print Testing Section removed */}
 
-          {/* Terminal IP Configuration Section */}
-          <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
-            <div className="section-header">
-              <h2 className="section-title">Terminal IP Configuration</h2>
-              <button
-                type="button"
-                onClick={() => {
-                  const input = document.getElementById("local-ip-settings") as HTMLInputElement;
-                  if (input) {
-                    localStorage.setItem("local_terminal_ip", input.value.trim());
-                    showToast("Local IP override saved successfully. Reloading...");
-                    setTimeout(() => {
-                      window.location.reload();
-                    }, 1500);
-                  }
-                }}
-                className="btn-primary"
-                style={{ height: "36px" }}
-              >
-                Save Local IP
-              </button>
-            </div>
-            <div className="flex flex-col gap-2.5">
-              <p className="helper-note" style={{ margin: 0, fontSize: "11px", color: "#5F6368" }}>
-                Distinguish multiple machines sharing the same local network by setting a local IPv4 address override.
-              </p>
-              <div className="flex gap-2.5 mt-2">
-                <input
-                  type="text"
-                  id="local-ip-settings"
-                  defaultValue={localStorage.getItem("local_terminal_ip") || ""}
-                  placeholder="e.g. 192.168.1.100"
-                  className="form-input"
-                  style={{ maxWidth: "200px", height: "36px", textAlign: "center" }}
-                />
-              </div>
-            </div>
-          </div>
-
           {/* AWB Print Configuration Section */}
           {isPrintTerminal && (
             <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
@@ -1178,7 +1026,151 @@ pause`.trim();
       {/* Right Column Wrapper */}
       <div className="flex flex-col gap-5" style={{ height: "auto", minWidth: "0" }}>
 
-        {/* Integration Authorization & Linked Shops */}
+        {/* Connection Credentials Section */}
+          <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
+            
+            {/* Header (Always Visible) */}
+            <div className="flex justify-between items-center" style={{ marginBottom: "16px" }}>
+              <h2 className="section-title">TikTok API Credentials</h2>
+              {!isLoadingKeys && (
+                <div>
+                  {!isEditingApi ? (
+                    <button 
+                      type="button"
+                      onClick={() => setIsEditingApi(true)}
+                      className="btn-secondary"
+                    >
+                      Edit API Settings
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={handleSaveKeys}
+                        disabled={isSaving}
+                        className="btn-primary"
+                      >
+                        {isSaving ? "Saving..." : "Save Setting Api"}
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setIsEditingApi(false);
+                          fetchKeys();
+                        }}
+                        className="btn-secondary"
+                        style={{ borderColor: "#E0E2E6", color: "#5F6368" }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {isLoadingKeys ? (
+              <div className="empty-shops-state" style={{ borderStyle: "none" }}>Loading credentials...</div>
+            ) : (
+              <form onSubmit={handleSaveKeys} className="settings-form">
+                <div className="flex gap-4">
+                  <div className="form-group" style={{ flex: 4 }}>
+                    <label className="form-label">TikTok App Key</label>
+                    <input 
+                      type="text" 
+                      value={appKey} 
+                      onChange={(e) => setAppKey(e.target.value)}
+                      placeholder="Enter App Key"
+                      className="form-input"
+                      disabled={!isEditingApi}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ flex: 6 }}>
+                    <label className="form-label">TikTok App Secret</label>
+                    <input 
+                      type="password" 
+                      value={appSecret} 
+                      onChange={(e) => setAppSecret(e.target.value)}
+                      placeholder="Enter App Secret"
+                      className="form-input"
+                      disabled={!isEditingApi}
+                    />
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {/* Scope Verification List Section (Moved directly under API fields) */}
+            <div style={{ marginTop: "24px", borderTop: "1px solid #E0E2E6", paddingTop: "16px" }}>
+              <h3 className="form-label" style={{ fontWeight: 600, marginBottom: "8px" }}>Scope Authorization Health</h3>
+              {isCheckingScopes ? (
+                <div className="empty-shops-state" style={{ borderStyle: "none" }}>Checking API scopes health...</div>
+              ) : (
+                <div className="scope-card-list">
+                  
+                  {/* 1. Global Shop Info Scope */}
+                  <div className="scope-card-item">
+                    <div className="scope-details">
+                      <span className="scope-name">Global Shop Information</span>
+                      <span className="scope-key">seller.shop.info</span>
+                    </div>
+                    {scopesCheck?.shop_info?.ok ? (
+                      <span className="scope-badge success">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="10 3 4.5 8.5 2 6"></polyline></svg>
+                        Healthy
+                      </span>
+                    ) : (
+                      <span className="scope-badge error" title={scopesCheck?.shop_info?.message}>
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line></svg>
+                        Error
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 2. Order Information Scope */}
+                  <div className="scope-card-item">
+                    <div className="scope-details">
+                      <span className="scope-name">Order Information</span>
+                      <span className="scope-key">seller.order.info</span>
+                    </div>
+                    {scopesCheck?.order_info?.ok ? (
+                      <span className="scope-badge success">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="10 3 4.5 8.5 2 6"></polyline></svg>
+                        Healthy
+                      </span>
+                    ) : (
+                      <span className="scope-badge error" title={scopesCheck?.order_info?.message}>
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line></svg>
+                        Error
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 3. Fulfillment Basic Scope */}
+                  <div className="scope-card-item">
+                    <div className="scope-details">
+                      <span className="scope-name">Fulfillment Basic</span>
+                      <span className="scope-key">seller.fulfillment.basic</span>
+                    </div>
+                    {scopesCheck?.fulfillment?.ok ? (
+                      <span className="scope-badge success">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="10 3 4.5 8.5 2 6"></polyline></svg>
+                        Healthy
+                      </span>
+                    ) : (
+                      <span className="scope-badge error" title={scopesCheck?.fulfillment?.message}>
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line></svg>
+                        Error
+                      </span>
+                    )}
+                  </div>
+
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Integration Authorization & Linked Shops */}
         <div className="settings-section" style={{ flexShrink: 0, overflow: "visible" }}>
           <div className="section-header">
             <h2 className="section-title">TikTok Shop Connections</h2>
@@ -1317,23 +1309,7 @@ pause`.trim();
                 )}
               </div>
 
-              {/* Authorize Shop Action Link */}
-              <div style={{ marginTop: "16px" }}>
-                <a 
-                  href="https://services.tiktokshop.com/open/authorize?service_id=7665903523104081672"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-primary"
-                >
-                  Authorize TikTok Shop
-                </a>
-                <p className="helper-note">
-                  Opens the official partner authentication portal. Make sure your redirect URI is set to: <br/>
-                  <code className="helper-code">
-                    https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/auth/callback
-                  </code>
-                </p>
-              </div>
+
 
             </div>
           )}
