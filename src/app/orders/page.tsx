@@ -694,7 +694,27 @@ export default function OrdersPage() {
           let pdfBytes: ArrayBuffer;
 
           if (matchedFile && matchedFile.alreadyInR2) {
-            const pdfRes = await fetch(docUrl);
+            let pdfRes = await fetch(docUrl);
+            if (!pdfRes.ok) {
+              if (pdfRes.status === 404) {
+                console.warn(`AWB PDF 404 in R2, falling back to TikTok API for order ${matchedFile.orderId}`);
+                const order = orders.find(o => o.id === matchedFile.orderId);
+                if (order) {
+                  const fallbackRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+                  if (fallbackRes.ok) {
+                    const fallbackData = await fallbackRes.json() as any;
+                    if (fallbackData.success && fallbackData.doc_url) {
+                      const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(fallbackData.doc_url)}`;
+                      pdfRes = await fetch(proxyUrl);
+                      if (pdfRes.ok) {
+                        matchedFile.alreadyInR2 = false;
+                        matchedFile.pdfUrl = fallbackData.doc_url;
+                      }
+                    }
+                  }
+                }
+              }
+            }
             if (!pdfRes.ok) {
               throw new Error(`Failed to download PDF from R2: ${pdfRes.status}`);
             }
@@ -937,7 +957,27 @@ export default function OrdersPage() {
           let pdfBytes: ArrayBuffer;
 
           if (matchedFile && matchedFile.alreadyInR2) {
-            const pdfRes = await fetch(docUrl);
+            let pdfRes = await fetch(docUrl);
+            if (!pdfRes.ok) {
+              if (pdfRes.status === 404) {
+                console.warn(`AWB PDF 404 in R2, falling back to TikTok API for order ${matchedFile.orderId}`);
+                const order = orders.find(o => o.id === matchedFile.orderId);
+                if (order) {
+                  const fallbackRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+                  if (fallbackRes.ok) {
+                    const fallbackData = await fallbackRes.json() as any;
+                    if (fallbackData.success && fallbackData.doc_url) {
+                      const proxyUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/proxy?url=${encodeURIComponent(fallbackData.doc_url)}`;
+                      pdfRes = await fetch(proxyUrl);
+                      if (pdfRes.ok) {
+                        matchedFile.alreadyInR2 = false;
+                        matchedFile.pdfUrl = fallbackData.doc_url;
+                      }
+                    }
+                  }
+                }
+              }
+            }
             if (!pdfRes.ok) {
               throw new Error(`Failed to download PDF from R2: ${pdfRes.status}`);
             }
