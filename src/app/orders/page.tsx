@@ -44,6 +44,8 @@ interface Order {
   before_pack_photo?: string;
   transit_at?: number;
   delivered_at?: number;
+  batch_id_packing?: string;
+  batch_id_packed?: string;
 }
 
 interface Shop {
@@ -1082,18 +1084,25 @@ export default function OrdersPage() {
     });
   };
 
+  const isOrderPacked = (order: Order) => {
+    const system = (order.system_status || "").toLowerCase();
+    const hasBatchPacked = Boolean(order.batch_id_packed && order.batch_id_packed.trim());
+    const hasBatchPacking = Boolean(order.batch_id_packing && order.batch_id_packing.trim());
+    return system === "packed" || hasBatchPacked || hasBatchPacking;
+  };
+
   // Status Filters classification helper
   const matchesTab = (order: Order, tab: string) => {
     const actual = (order.actual_status || "").toUpperCase();
-    const system = (order.system_status || "").toLowerCase();
+    const isPacked = isOrderPacked(order);
 
     switch (tab) {
       case "all":
         return true;
       case "pending_pack":
-        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "unpacked";
+        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && !isPacked;
       case "pending_collection":
-        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "packed";
+        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && isPacked;
       case "in_transit":
         return actual === "IN_TRANSIT" || actual === "SHIPPED" || actual === "PICK_UP";
       case "delivered":

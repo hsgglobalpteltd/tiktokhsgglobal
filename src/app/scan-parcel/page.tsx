@@ -32,6 +32,8 @@ interface Order {
   logs?: any;
   rts_sla_time?: number;
   tts_sla_time?: number;
+  batch_id_packing?: string;
+  batch_id_packed?: string;
 }
 
 interface ScannedItem {
@@ -119,6 +121,14 @@ export default function ScanPackPage() {
 
 
 
+  // Helper to check if an order is already packed (via system_status or Tiktok_Pending batch_id)
+  const isOrderPacked = (order: Order) => {
+    const system = (order.system_status || "").toLowerCase();
+    const hasBatchPacked = Boolean(order.batch_id_packed && order.batch_id_packed.trim());
+    const hasBatchPacking = Boolean(order.batch_id_packing && order.batch_id_packing.trim());
+    return system === "packed" || hasBatchPacked || hasBatchPacking;
+  };
+
   // Memoized counts for each status tab to match Orders page layout
   const counts = React.useMemo(() => {
     let all = 0;
@@ -134,11 +144,12 @@ export default function ScanPackPage() {
       all++;
       const actual = (order.actual_status || "").toUpperCase();
       const system = (order.system_status || "").toLowerCase();
+      const packed = isOrderPacked(order);
 
       if (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") {
         if (system === "dropped") {
           dropped++;
-        } else if (system === "packed") {
+        } else if (packed) {
           pending_collection++;
         } else {
           pending_pack++;
@@ -162,12 +173,13 @@ export default function ScanPackPage() {
 
         const actual = (order.actual_status || "").toUpperCase();
         const system = (order.system_status || "").toLowerCase();
+        const packed = isOrderPacked(order);
 
         // Tab filter
         if (selectedTab === "pending_pack") {
-          if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "unpacked")) return false;
+          if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && !packed && system !== "dropped")) return false;
         } else if (selectedTab === "pending_collection") {
-          if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "packed")) return false;
+          if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && packed)) return false;
         } else if (selectedTab === "dropped") {
           if (!((actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && system === "dropped")) return false;
         } else if (selectedTab === "in_transit") {
